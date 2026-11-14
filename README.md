@@ -1430,9 +1430,10 @@ Sourcegraph, Xapo Bank, Counterpart, Clearer.io, Metabase, CoinMarketCap,
 Superside, Fingerprint, VRChat, Kinsta, Raya, CloudLinux, Passion.io and SafetyWing
 use verified Ashby, Greenhouse, Lever, Workable or Pinpoint feeds with full
 descriptions through the existing snapshot, matching and hosted worker paths.
-Workable location-specific duplicates are combined into one posting. The other
-five PDF entries remain unavailable for automatic fetching until their feeds are
-verified. After deploying this source revision to the hosted app
+Workable location-specific duplicates are combined into one posting. DuckDuckGo
+is enabled by the additional migration below. The remaining four PDF entries
+remain unavailable for automatic fetching until their feeds are verified.
+After deploying this source revision to the hosted app
 and worker, run `python -B -m scripts.seed_companies` in the hosted application
 environment. This command backs up SQLite, applies migration
 `024_worldwide_company_sources.sql`, seeds the catalog and activates these twenty-five
@@ -1440,3 +1441,17 @@ previously disabled entries without changing their IDs or subscriptions. It does
 not fetch jobs, score resumes or send email. The next existing worker cycle can
 fetch selected enabled companies. Read-only live checks are available with
 `python -B -m scripts.check_career_sources supabase camunda livekit atticus alpaca canonical kindred assemblyai instrumentl happyco wishpond sourcegraph xapo counterpart clearer metabase coinmarketcap superside fingerprint vrchat kinsta raya cloudlinux passion safetywing`.
+
+Migration `034_remote_employer_sources.sql` extends the source allowlist for
+HighLevel, GitLab, Grafana Labs, Wikimedia Foundation, Remote.com, Atlassian,
+Toptal, Deel, Elastic, Zapier, Automattic, Shopify and GitHub. Supabase and
+Canonical retain their existing entries; DuckDuckGo now uses its verified Ashby
+board and is enabled by the catalog seed/sync alongside the new sources.
+Deploy through the existing backup-producing release process before syncing
+the catalog or restarting workers. The standard seed command retains IDs,
+subscriptions and job history. Remote.com, Atlassian, Deel and Shopify use their
+official public APIs or server-rendered career data, with additive observations
+and full descriptions resolved only for scoring candidates. Deel details stay
+on its explicitly allowlisted `jobs.deel.com` host. Existing seniority,
+subscription, location and role filters still determine which fetched jobs
+appear or get scored; remote listings do not imply India eligibility.

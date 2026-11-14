@@ -19,8 +19,10 @@ class SaasSourceTests(unittest.TestCase):
     def test_worldwide_boards_fetch_full_descriptions_and_reactivate_saved_catalog_rows(self):
         for key in sources.VERIFIED_WORLDWIDE_SOURCES:
             kind = sources.SOURCES[key][1]
-            if kind == 'lever':
-                continue  # Lever's array response and description sections are covered separately.
+            if kind == 'lever' or mode_for_source(key) == 'observed':
+                # Lever arrays, custom career pages and iCIMS details have
+                # their own format fixtures; this loop verifies full snapshots.
+                continue
             payload = self.payload(key if kind in ('workable', 'pinpoint') else
                                    'airbnb' if kind == 'greenhouse' else 'notion')
             with self.subTest(key=key), patch.object(sources.Feed, 'json', return_value=payload) as request:

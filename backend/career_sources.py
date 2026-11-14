@@ -64,7 +64,7 @@ SOURCES = {
     'xapo': ('Xapo Bank', 'greenhouse', 'https://boards-api.greenhouse.io'),
     'sourcegraph': ('Sourcegraph', 'greenhouse', 'https://boards-api.greenhouse.io'),
     'passion': ('Passion.io', 'workable', 'https://apply.workable.com'),
-    'duckduckgo': ('DuckDuckGo', 'blocked', 'https://duckduckgo.com/hiring'),
+    'duckduckgo': ('DuckDuckGo', 'ashby', 'https://api.ashbyhq.com'),
     'safetywing': ('SafetyWing', 'pinpoint', 'https://safetywing.pinpointhq.com'),
     'alpaca': ('Alpaca', 'greenhouse', 'https://boards-api.greenhouse.io'),
     'atticus': ('Atticus', 'ashby', 'https://api.ashbyhq.com'),
@@ -83,15 +83,33 @@ SOURCES = {
     'wishpond': ('Wishpond', 'lever', 'https://api.lever.co'),
     'kinsta': ('Kinsta', 'lever', 'https://api.lever.co'),
     'assemblyai': ('AssemblyAI', 'greenhouse', 'https://boards-api.greenhouse.io'),
+    'highlevel': ('HighLevel', 'lever', 'https://api.lever.co'),
+    'gitlab': ('GitLab', 'greenhouse', 'https://boards-api.greenhouse.io'),
+    'grafana': ('Grafana Labs', 'greenhouse', 'https://boards-api.greenhouse.io'),
+    'wikimedia': ('Wikimedia Foundation', 'greenhouse', 'https://boards-api.greenhouse.io'),
+    'remote': ('Remote.com', 'remote', 'https://apply.remote.com'),
+    'atlassian': ('Atlassian', 'atlassian', 'https://www.atlassian.com'),
+    'toptal': ('Toptal', 'lever', 'https://api.lever.co'),
+    'deel': ('Deel', 'deel', 'https://www.deel.com'),
+    'elastic': ('Elastic', 'greenhouse', 'https://boards-api.greenhouse.io'),
+    'zapier': ('Zapier', 'ashby', 'https://api.ashbyhq.com'),
+    'automattic': ('Automattic', 'greenhouse', 'https://boards-api.greenhouse.io'),
+    'shopify': ('Shopify', 'shopify', 'https://www.shopify.com'),
+    'github': ('GitHub', 'jibe', 'https://www.github.careers'),
 }
 VERIFIED_WORLDWIDE_SOURCES = ('supabase', 'camunda', 'livekit', 'atticus', 'alpaca',
                               'canonical', 'kindred', 'assemblyai', 'instrumentl',
                               'sourcegraph', 'happyco', 'wishpond', 'xapo',
                               'counterpart', 'clearer', 'metabase', 'coinmarketcap',
                               'superside', 'fingerprint', 'vrchat', 'kinsta', 'raya',
-                              'cloudlinux', 'passion', 'safetywing')
+                              'cloudlinux', 'passion', 'safetywing', 'duckduckgo',
+                              'highlevel', 'gitlab', 'grafana', 'wikimedia', 'remote',
+                              'atlassian', 'toptal', 'deel', 'elastic', 'zapier',
+                              'automattic', 'shopify', 'github')
 BOARD_SLUGS = {'instrumentl': 'Instrumentl', 'sourcegraph': 'sourcegraph91',
-               'xapo': 'xapo61', 'clearer': 'Clearer'}
+               'xapo': 'xapo61', 'clearer': 'Clearer', 'highlevel': 'gohighlevel',
+               'grafana': 'grafanalabs', 'duckduckgo': 'duck-duck-go',
+               'automattic': 'automatticcareers'}
 WORKDAY = {'synechron': ('synechron', 'SynechronCareers'), 'hotstar': ('jiostar', 'JioStar'), 'bofa': ('ghr', 'lateral-us'),
            'postman': ('postman', 'careers'), 'pwc': ('pwc', 'Global_Experienced_Careers'),
            'salesforce': ('salesforce', 'External_Career_Site'),
@@ -153,7 +171,10 @@ class Feed:
 
     def request(self, path, *, data=None, params=None):
         url = urljoin(self.origin + '/', path)
-        if urlsplit(url).scheme != 'https' or urlsplit(url).netloc != urlsplit(self.origin).netloc:
+        hosts = {urlsplit(self.origin).netloc}
+        if self.key == 'deel':
+            hosts.add('jobs.deel.com')  # Official listing links publish details on this host.
+        if urlsplit(url).scheme != 'https' or urlsplit(url).netloc not in hosts:
             raise ValueError('Career request must stay on its allowlisted host')
         remaining = self.deadline - time.monotonic()
         if remaining < 1:
@@ -415,6 +436,9 @@ def _listings(feed, rows=None):
     rows = [] if rows is None else rows
     expected = None
     slug = BOARD_SLUGS.get(key, key)
+    if kind in ('remote', 'atlassian', 'deel', 'shopify'):
+        from backend.remote_career_sources import listings
+        return listings(feed, rows)
     if kind in ('workable', 'pinpoint'):
         if kind == 'workable':
             account = WORKABLE_ACCOUNTS[key]
@@ -834,7 +858,10 @@ def prepare_job(job_row, deadline=None):
     feed = Feed(key, deadline if deadline is not None else time.monotonic() + 30)
     try:
         kind = SOURCES[key][1]
-        if kind == 'google':
+        if kind in ('remote', 'atlassian', 'deel', 'shopify'):
+            from backend.remote_career_sources import detail
+            title, location, description, employment = detail(feed, result)
+        elif kind == 'google':
             text = feed.request(result['url'])
             canonical = [attrs.get('href') for attrs in Page(text).attributes if attrs.get('rel') == 'canonical']
             page_title = re.search(r'<title>(.*?)</title>', text, re.S)
