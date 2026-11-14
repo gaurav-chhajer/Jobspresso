@@ -124,6 +124,13 @@ class StartupWorkerTests(unittest.TestCase):
         queued.assert_not_called()
         sequential.assert_called_once_with('deterministic',fetch_only=False)
 
+    def test_default_continuous_worker_uses_independent_deterministic_queue(self):
+        with patch.object(watch_hosted_jobs, 'run_queued', return_value=0) as queued, \
+                patch.object(watch_hosted_jobs, 'run_cycle') as sequential:
+            self.assertEqual(watch_hosted_jobs.main(['--run']), 0)
+        queued.assert_called_once_with('deterministic')
+        sequential.assert_not_called()
+
     def test_explicit_groq_provider_keeps_independent_queue(self):
         with patch.object(watch_hosted_jobs,'run_queued',return_value=0) as queued, \
                 patch.object(watch_hosted_jobs,'run_cycle') as sequential:
@@ -210,6 +217,48 @@ class QueuedWorkerTests(unittest.TestCase):
         for session in sessions:
             session.close.assert_called_once()
 
+    def test_deterministic_scoring_saves_queued_job_before_fetch_finishes(self):
+        snapshot_saved, score_saved = threading.Event(), threading.Event()
+        clients = [MagicMock(), MagicMock()]
+        scorer = MagicMock()
+        scorer_thread = []
+
+        def fetch(client, deadline, *, fetch_only, pool, stop, allow_partial):
+            client.call('snapshot', {'jobs': [{'id': 1}]})
+            snapshot_saved.set()
+            self.assertTrue(score_saved.wait(2), 'Scoring waited for fetching to finish')
+            stop.set()
+            return 0
+
+        def create_scorer():
+            scorer_thread.append(threading.get_ident())
+            return scorer
+
+        def score(client, deadline, local_scorer, stop):
+            self.assertIs(local_scorer, scorer)
+            self.assertEqual(threading.get_ident(), scorer_thread[0])
+            self.assertTrue(snapshot_saved.wait(2))
+            client.call('score', {'job_id': 1})
+            score_saved.set()
+            self.assertTrue(stop.wait(2))
+            return 0
+
+        with patch.object(watch_hosted_jobs, 'exclusive_cycle'), \
+                patch.object(runner, 'HostedClient', side_effect=clients), \
+                patch.object(runner, '_fetch_and_score', side_effect=fetch), \
+                patch('backend.local_embeddings.LocalScorer', side_effect=create_scorer), \
+                patch.object(runner, 'score_pending_deterministic', side_effect=score) as scoring, \
+                patch.object(runner, 'score_pending') as groq, \
+                patch.object(runner, 'send_emails') as email:
+            self.assertEqual(watch_hosted_jobs.run_queued('deterministic'), 0)
+        scoring.assert_called_once()
+        groq.assert_not_called()
+        email.assert_not_called()
+        scorer.close.assert_called_once()
+        for client in clients:
+            client.close.assert_called_once()
+        self.assertTrue(score_saved.is_set())
+
     def test_unavailable_candidate_does_not_abort_queue_batch(self):
         client,pool=MagicMock(),MagicMock()
         client.call.side_effect=[dict(next=1,items=[dict(user=dict(id=1,resume_text='fixture'),job=dict(id=1),company_name='fixture',fingerprint='a'*64)]),dict(next=None,items=[])]
@@ -258,7 +307,7 @@ class QueuedWorkerTests(unittest.TestCase):
                     self.assertEqual(watch_hosted_jobs._score_loop('client', stop, ready), 1)
                 self.assertEqual(len(batches), 2)
                 email.assert_called_once()
-                self.assertIn('Groq scoring continues', '\n'.join(logs.output))
+                self.assertIn('Queue scoring continues', '\n'.join(logs.output))
                 self.assertNotIn('private message', '\n'.join(logs.output))
 
     def test_read_recovery_uses_bounded_backoff_without_holding_write_lock(self):

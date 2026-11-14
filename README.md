@@ -407,7 +407,7 @@ Start the unified worker using private configuration:
 .\.venv\Scripts\python.exe -B -m scripts.start_hosted_worker
 ```
 
-One local process owns independent fetching and scoring/email loops. Fetches target
+One local process owns independent fetching and scoring/email loops. The default deterministic provider uses these concurrent loops too: scoring reads the existing queue immediately, and each accepted job snapshot wakes it without waiting for the remaining company fetches. One-shot and fetch-only commands retain their sequential, bounded behavior. Fetches target
 five-minute intervals measured from their start; an overrun finishes before the
 next fetch starts, without overlapping fetches. Scoring continues while boards
 are downloaded. Successful snapshots enter the hosted pending queue immediately;

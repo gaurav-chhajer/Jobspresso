@@ -88,14 +88,18 @@ def _fetch_loop(client, stop):
     return 0
 
 
-def _score_loop(client, stop, ready, email_state=None, quota=None):
+def _score_loop(client, stop, ready, email_state=None, quota=None, scorer=None):
     email_state = email_state if email_state is not None else {"paused": False}
     quota = quota if quota is not None else QuotaState()
     while not stop.is_set():
         ready.clear()
         logger.info("Queue scoring batch started; fetching runs independently.")
         try:
-            status = worker.score_pending(client, time.monotonic() + worker.MATCHING_SECONDS, stop, quota=quota)
+            deadline = time.monotonic() + worker.MATCHING_SECONDS
+            if scorer is None:
+                status = worker.score_pending(client, deadline, stop, quota=quota)
+            else:
+                status = worker.score_pending_deterministic(client, deadline, scorer, stop=stop)
         except CooldownPending as error:
             logger.info('Groq provider cooldown: waiting %.3f seconds; fetching remains independent.', error.seconds)
             if stop.wait(error.seconds):
@@ -110,31 +114,44 @@ def _score_loop(client, stop, ready, email_state=None, quota=None):
                 email_status = worker.send_emails(client, time.monotonic() + worker.EMAIL_SECONDS, matches_only=True)
             except (requests.RequestException, OSError, RuntimeError, ValueError, KeyError, TypeError) as error:
                 email_state["paused"] = True
-                logger.error('Email delivery paused (%s); reconcile provider and hosted sent history before restarting email. Groq scoring continues; no send retry.',
+                logger.error('Email delivery paused (%s); reconcile provider and hosted sent history before restarting email. Queue scoring continues; no send retry.',
                              type(error).__name__)
             else:
                 if email_status:
                     email_state["paused"] = True
-                    logger.error('Email delivery paused; reconcile provider and hosted sent history before restarting email. Groq scoring continues; no send retry.')
+                    logger.error('Email delivery paused; reconcile provider and hosted sent history before restarting email. Queue scoring continues; no send retry.')
         ready.wait(QUEUE_POLL_SECONDS)
     return int(email_state["paused"])
 
 
-def _scoring_supervisor(writes, stop, ready):
+def _scoring_supervisor(writes, stop, ready, provider="groq"):
     """Reconnect the scoring client after failures while preserving email pause state."""
     email_state = {"paused": False}
     quota = QuotaState()
     while not stop.is_set():
         client = None
+        scorer = None
         status = 1
         try:
             client = _QueuedClient(writes, stop, ready)
-            status = _score_loop(client, stop, ready, email_state, quota)
+            if provider == "deterministic":
+                from backend.local_embeddings import LocalScorer
+                scorer = LocalScorer()
+                status = _score_loop(client, stop, ready, email_state, quota, scorer=scorer)
+            else:
+                status = _score_loop(client, stop, ready, email_state, quota)
         except Exception as error:
             status = 1
             logger.error("Scoring/email connection failed (%s); queued scoring will reconnect after %s seconds.",
                          type(error).__name__, SCORING_RECONNECT_SECONDS)
         finally:
+            if scorer is not None:
+                try:
+                    scorer.close()
+                except Exception as error:
+                    status = 1
+                    logger.error("Local scorer cleanup failed (%s); reconnecting after %s seconds.",
+                                 type(error).__name__, SCORING_RECONNECT_SECONDS)
             if client is not None:
                 try:
                     client.close()
@@ -152,7 +169,7 @@ def _scoring_supervisor(writes, stop, ready):
     return int(email_state["paused"])
 
 
-def run_queued():
+def run_queued(provider="groq"):
     """One fetcher and one scoring/email consumer share the existing persisted queue."""
     stop, ready = threading.Event(), threading.Event()
     writes = threading.Lock()
@@ -165,7 +182,7 @@ def run_queued():
                 client = _QueuedClient(writes, stop, ready)
                 statuses[index] = _fetch_loop(client, stop)
             else:
-                statuses[index] = _scoring_supervisor(writes, stop, ready)
+                statuses[index] = _scoring_supervisor(writes, stop, ready, provider=provider)
         except Exception as error:
             statuses[index] = 1
             logger.error("%s loop stopped (%s); inspect logs before restarting. The other loop remains independent.",
@@ -238,8 +255,8 @@ def main(argv=None):
         logger.info("Preview only: provider=%s; no external calls made.", args.provider)
         return 0
     try:
-        if args.provider == 'groq' and not args.fetch_only and not args.once:
-            return run_queued()
+        if args.provider in ('groq', 'deterministic') and not args.fetch_only and not args.once:
+            return run_queued('deterministic') if args.provider == 'deterministic' else run_queued()
         with exclusive_cycle(LOCK_PATH):
             while True:
                 logger.info("Hosted job check started.")
