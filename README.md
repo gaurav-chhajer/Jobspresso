@@ -1455,3 +1455,17 @@ and full descriptions resolved only for scoring candidates. Deel details stay
 on its explicitly allowlisted `jobs.deel.com` host. Existing seniority,
 subscription, location and role filters still determine which fetched jobs
 appear or get scored; remote listings do not imply India eligibility.
+
+Migration `035_additional_remote_employers.sql` adds Drivetrain, Smart Working
+Solutions, Sprinto, Jobgether and Weekday without duplicating HighLevel's entry.
+Their verified Lever board IDs include the case-sensitive `Sprinto` and
+`weekdayworks`. Jobgether is explicitly labelled as a hiring platform and uses
+paginated India listings with bounded requests and additive observations; a
+failed later page preserves the successfully fetched jobs without closing other
+postings. Drivetrain also uses paginated additive observations because its board
+includes an empty-description posting; such postings are withheld with a warning
+while valid later postings remain available. Weekday is also labelled as a hiring platform, so confidential partner
+roles are not presented as confirmed direct-employer vacancies. Existing
+seniority filters remain in effect, including for the senior roles in supplied
+lists. These additions need the same backed-up hosted migration and catalog
+seed/sync before the live worker can fetch them.

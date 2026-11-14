@@ -18,6 +18,7 @@ MAX_BYTES = 8 * 1024 * 1024
 MAX_LISTINGS = 10000
 MAX_PAGES = 1000
 MAX_DESCRIPTION = 250000
+LEVER_PAGE_SIZE = 100
 CONNECT_TIMEOUT_SECONDS = 15
 READ_TIMEOUT_SECONDS = 60
 SOURCES = {
@@ -96,6 +97,11 @@ SOURCES = {
     'automattic': ('Automattic', 'greenhouse', 'https://boards-api.greenhouse.io'),
     'shopify': ('Shopify', 'shopify', 'https://www.shopify.com'),
     'github': ('GitHub', 'jibe', 'https://www.github.careers'),
+    'drivetrain': ('Drivetrain', 'lever_paged', 'https://api.lever.co'),
+    'smartworking': ('Smart Working Solutions', 'lever', 'https://api.lever.co'),
+    'sprinto': ('Sprinto', 'lever', 'https://api.lever.co'),
+    'jobgether': ('Jobgether (hiring platform)', 'lever_paged', 'https://api.lever.co'),
+    'weekday': ('Weekday (hiring platform)', 'lever', 'https://api.lever.co'),
 }
 VERIFIED_WORLDWIDE_SOURCES = ('supabase', 'camunda', 'livekit', 'atticus', 'alpaca',
                               'canonical', 'kindred', 'assemblyai', 'instrumentl',
@@ -105,11 +111,13 @@ VERIFIED_WORLDWIDE_SOURCES = ('supabase', 'camunda', 'livekit', 'atticus', 'alpa
                               'cloudlinux', 'passion', 'safetywing', 'duckduckgo',
                               'highlevel', 'gitlab', 'grafana', 'wikimedia', 'remote',
                               'atlassian', 'toptal', 'deel', 'elastic', 'zapier',
-                              'automattic', 'shopify', 'github')
+                              'automattic', 'shopify', 'github', 'drivetrain',
+                              'smartworking', 'sprinto', 'jobgether', 'weekday')
 BOARD_SLUGS = {'instrumentl': 'Instrumentl', 'sourcegraph': 'sourcegraph91',
                'xapo': 'xapo61', 'clearer': 'Clearer', 'highlevel': 'gohighlevel',
                'grafana': 'grafanalabs', 'duckduckgo': 'duck-duck-go',
-               'automattic': 'automatticcareers'}
+               'automattic': 'automatticcareers', 'smartworking': 'smart-working-solutions',
+               'sprinto': 'Sprinto', 'weekday': 'weekdayworks'}
 WORKDAY = {'synechron': ('synechron', 'SynechronCareers'), 'hotstar': ('jiostar', 'JioStar'), 'bofa': ('ghr', 'lateral-us'),
            'postman': ('postman', 'careers'), 'pwc': ('pwc', 'Global_Experienced_Careers'),
            'salesforce': ('salesforce', 'External_Career_Site'),
@@ -528,27 +536,53 @@ def _listings(feed, rows=None):
             batch.append(row)
         rows.extend(batch)
         return rows
-    if kind == 'lever':
-        items = json.loads(feed.request('/v0/postings/' + slug, params={'mode': 'json'}))
-        if not isinstance(items, list) or len(items) > MAX_LISTINGS:
-            raise ValueError('Career board snapshot is invalid or oversized')
-        for item in items:
-            if not isinstance(item, dict) or not isinstance(item.get('categories'), dict):
-                raise ValueError('Career board listing is invalid')
-            sections = item.get('lists', [])
-            if not isinstance(sections, list) or any(not isinstance(section, dict) for section in sections):
-                raise ValueError('Career description sections are invalid')
-            parts = [item.get('description') or '']
-            parts += [section.get('content') or '' for section in sections]
-            parts.append(item.get('additional') or '')
-            if any(not isinstance(part, str) for part in parts) or not any(part.strip() for part in parts):
-                raise ValueError('Full career description is missing')
-            row = job(key, item['id'], item['text'], item['categories'].get('location'),
-                      item['hostedUrl'], description='\n'.join(parts),
-                      department=item['categories'].get('team'),
-                      employment=item['categories'].get('commitment'))
-            rows.append(row)
-        return rows
+    if kind in ('lever', 'lever_paged'):
+        seen = set()
+        for page_number in range(MAX_PAGES if kind == 'lever_paged' else 1):
+            params = {'mode': 'json'}
+            if kind == 'lever_paged':
+                params.update(limit=LEVER_PAGE_SIZE, skip=page_number * LEVER_PAGE_SIZE)
+                if key == 'jobgether':
+                    params['location'] = 'India'
+                feed.progress['page'] = page_number + 1
+            items = json.loads(feed.request('/v0/postings/' + slug, params=params))
+            if not isinstance(items, list) or len(items) > MAX_LISTINGS:
+                raise ValueError('Career board snapshot is invalid or oversized')
+            if kind == 'lever_paged':
+                if len(items) > LEVER_PAGE_SIZE or len(seen) + len(items) > MAX_LISTINGS:
+                    raise ValueError('Career pagination returned too many jobs')
+                identifiers = [item.get('id') if isinstance(item, dict) else None for item in items]
+                if any(not isinstance(identifier, str) or not identifier for identifier in identifiers):
+                    raise ValueError('Career board listing is invalid')
+                if len(set(identifiers)) != len(identifiers) or seen.intersection(identifiers):
+                    raise ValueError('Career pagination repeated a job identifier')
+                seen.update(identifiers)
+            for item in items:
+                if not isinstance(item, dict) or not isinstance(item.get('categories'), dict):
+                    raise ValueError('Career board listing is invalid')
+                sections = item.get('lists', [])
+                if not isinstance(sections, list) or any(not isinstance(section, dict) for section in sections):
+                    raise ValueError('Career description sections are invalid')
+                parts = [item.get('description') or '']
+                parts += [section.get('content') or '' for section in sections]
+                parts.append(item.get('additional') or '')
+                if any(not isinstance(part, str) for part in parts):
+                    raise ValueError('Career description sections are invalid')
+                if not any(part.strip() for part in parts):
+                    if kind == 'lever_paged':
+                        import logging
+                        logging.getLogger(__name__).warning(
+                            'Career posting withheld: source=%s job_id=%s reason=empty_description', key, item['id'])
+                        continue
+                    raise ValueError('Full career description is missing')
+                row = job(key, item['id'], item['text'], item['categories'].get('location'),
+                          item['hostedUrl'], description='\n'.join(parts),
+                          department=item['categories'].get('team'),
+                          employment=item['categories'].get('commitment'))
+                rows.append(row)
+            if kind == 'lever' or len(items) < LEVER_PAGE_SIZE:
+                return rows
+        raise ValueError('Career pagination limit reached; snapshot withheld')
     if kind in ('greenhouse', 'ashby'):
         path = ('/v1/boards/' + slug + '/jobs?content=true' if kind == 'greenhouse'
                 else '/posting-api/job-board/' + slug)
