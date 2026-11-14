@@ -8,22 +8,19 @@
   if (slider) slider.addEventListener('input', () => {
     slider.nextElementSibling.value = `${slider.value}%`;
   });
-  list.querySelectorAll('.company-job-card').forEach(card => {
-    const roles = [...card.querySelectorAll('.company-role')];
-    let position = 0;
-    function update() {
-      roles.forEach((role, index) => { role.hidden = index !== position; });
-      card.querySelector('.role-position').textContent = `${position + 1} / ${roles.length} shown`;
-      card.querySelector('[data-role-step="-1"]').disabled = position === 0;
-      card.querySelector('[data-role-step="1"]').disabled = position === roles.length - 1;
-    }
-    card.querySelectorAll('[data-role-step]').forEach(button => button.addEventListener('click', () => {
-      position = Math.max(0, Math.min(roles.length - 1, position + Number(button.dataset.roleStep)));
-      update();
-      roles[position].querySelector('.jt-link').focus({preventScroll: true});
-    }));
-    update();
-  });
+  const companyChoices = [...list.querySelectorAll('[data-company-choice]')];
+  const companyPanels = [...list.querySelectorAll('[data-company-panel]')];
+  function showCompany(companyId) {
+    companyPanels.forEach(card => { card.hidden = card.dataset.companyPanel !== companyId; });
+    companyChoices.forEach(link => {
+      if (link.dataset.companyChoice === companyId) link.setAttribute('aria-current', 'true');
+      else link.removeAttribute('aria-current');
+    });
+    const active = companyPanels.find(card => card.dataset.companyPanel === companyId);
+    panel.hidden = !active || ![...active.querySelectorAll('[data-role-id]')].some(role => role.dataset.roleId === panel.dataset.jobId);
+  }
+  const initialCompany = list.querySelector('.company-role.is-selected')?.closest('[data-company-panel]');
+  if (companyChoices.length) showCompany(initialCompany?.dataset.companyPanel || companyChoices[0].dataset.companyChoice);
   let pending;
   let sequence = 0;
 
@@ -34,6 +31,8 @@
       if (selected) link.setAttribute('aria-current', 'true');
       else link.removeAttribute('aria-current');
     });
+    const company = [...list.querySelectorAll('[data-role-id]')].find(role => role.dataset.roleId === jobId)?.closest('[data-company-panel]');
+    if (company) showCompany(company.dataset.companyPanel);
   }
 
   async function select(url, push) {
@@ -79,6 +78,17 @@
 
   function click(event) {
     if (event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    const company = event.target.closest('[data-company-choice]');
+    if (company && list.contains(company)) {
+      event.preventDefault();
+      sequence += 1;
+      if (pending) pending.abort();
+      pending = null;
+      panel.removeAttribute('aria-busy');
+      showCompany(company.dataset.companyChoice);
+      status.textContent = 'Company roles updated.';
+      return;
+    }
     const link = event.target.closest('.jt-link');
     if (!link || !list.contains(link) || (link.target && link.target !== '_self') || link.hasAttribute('download')) return;
     const url = new URL(link.href, window.location.href);

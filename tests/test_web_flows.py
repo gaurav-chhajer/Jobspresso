@@ -430,6 +430,40 @@ class WebFlowTests(unittest.TestCase):
         asset = self.client.get('/static/js/job-selection.js')
         self.assertEqual(asset.status_code, 200)
 
+    def test_company_workspace_renders_all_loaded_roles_without_scripts(self):
+        self.seed_user()
+        self.conn.execute('UPDATE jobs SET company_id=1 WHERE id=2')
+        self.conn.commit()
+        with self.client.get('/jobs?sort=best') as page:
+            self.assertEqual(page.status_code,200)
+            self.assertIn(b'aria-label="Matched companies"',page.data)
+            self.assertEqual(page.data.count(b'data-company-panel='),1)
+            self.assertEqual(page.data.count(b'data-role-id='),2)
+            self.assertIn(b'2 of 2 matching roles shown',page.data)
+            self.assertIn(b'Skill coverage',page.data)
+            self.assertIn(b'1 of 2 skills found',page.data)
+            self.assertNotIn(b'data-role-step',page.data)
+            self.assertNotIn(b'class="company-role" hidden',page.data)
+
+    def test_jobs_reference_tiers_preserve_alignment_estimate_semantics(self):
+        self.seed_user()
+        for score, tier, label in ((0, 'stretch', 'Stretch role'),
+                                   (39, 'stretch', 'Stretch role'),
+                                   (40, 'moderate', 'Moderate match'),
+                                   (69, 'moderate', 'Moderate match'),
+                                   (70, 'strong', 'Strong match'),
+                                   (100, 'strong', 'Strong match')):
+            with self.subTest(score=score):
+                store_score(self.conn, 1, 1, dict(fit_score=score, reasoning='Estimate',
+                            matched_skills=['Python'], missing_requirements=['SQL']))
+                self.conn.commit()
+                with self.client.get('/jobs?min_score=0&company=1') as page:
+                    self.assertEqual(page.status_code, 200)
+                    self.assertIn(('company-role role-' + tier).encode(), page.data)
+                    self.assertIn(('class="role-tier">' + label).encode(), page.data)
+                    self.assertIn(b'Resume-to-JD alignment estimate', page.data)
+                    self.assertIn(b'1 of 2 skills found', page.data)
+
     def test_account_pages_use_jobspresso_theme_and_nonce_protected_loader(self):
         nonces = []
         for path in ('/login', '/register', '/forgot-password', '/reset-password'):

@@ -14,6 +14,67 @@ from tests import test_admin_integration
 
 class AdminBrowserChecks(test_admin_integration.AdminIntegrationTests):
     # Only browser methods are run by load_tests below; fixture setup is reused.
+    def jobs_filters(self):
+        root=Path(__file__).resolve().parents[1]
+        output=root/'tests/artifacts/jobs-filters'
+        output.mkdir(parents=True,exist_ok=True)
+        with patch.dict(os.environ,{'PLAYWRIGHT_BROWSERS_PATH':str(root/'data/browser-binaries')}), sync_playwright() as runtime:
+            browser=runtime.chromium.launch(headless=True)
+            try:
+                context=browser.new_context(service_workers='block',reduced_motion='reduce')
+                try:
+                    def serve(route):
+                        url=urlsplit(route.request.url)
+                        if url.hostname!='localhost':
+                            route.abort()
+                            return
+                        with self.client.get(url.path+('?' + url.query if url.query else '')) as response:
+                            headers={key:value for key,value in response.headers if key.lower() not in ('content-length','set-cookie')}
+                            route.fulfill(status=response.status_code,headers=headers,body=response.data)
+                    context.route('**/*',serve)
+                    page=context.new_page()
+                    for width in (1440,900,650,390,320):
+                        page.set_viewport_size({'width':width,'height':1000})
+                        page.goto('http://localhost/jobs?min_score=70&sort=recent')
+                        page.locator('#boot').wait_for(state='hidden')
+                        for theme in ('light','dark'):
+                            page.evaluate('(theme) => document.documentElement.dataset.theme=theme',theme)
+                            form=page.locator('.jobs-filters')
+                            self.assertLessEqual(form.evaluate('el => el.scrollWidth'),form.evaluate('el => el.clientWidth'))
+                            fields=page.locator('.jobs-filter-fields input, .jobs-filter-fields select')
+                            boxes=[fields.nth(i).bounding_box() for i in range(fields.count())]
+                            self.assertEqual([box['height'] for box in boxes],[46]*4)
+                            if width==1440:
+                                self.assertEqual(len({box['y'] for box in boxes}),1)
+                            slider=page.locator('#jobs-score')
+                            slider.focus()
+                            page.keyboard.press('ArrowRight')
+                            self.assertEqual(page.locator('.jobs-score output').inner_text(),slider.input_value()+'%')
+                            self.assertEqual(slider.evaluate('el => getComputedStyle(el).appearance'),'none')
+                            self.assertEqual(slider.bounding_box()['height'],44)
+                            form.screenshot(path=str(output/f'{width}-{theme}.png'))
+                            choices=page.locator('[data-company-choice]')
+                            self.assertEqual(choices.count(),2)
+                            choices.nth(1).click()
+                            active=page.locator('[data-company-panel]:visible')
+                            self.assertEqual(active.count(),1)
+                            self.assertEqual(active.get_attribute('data-company-panel'),choices.nth(1).get_attribute('data-company-choice'))
+                            self.assertEqual(active.locator('.company-role:visible').count(),active.locator('.company-role').count())
+                            self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'),width)
+                            page.locator('.company-browser').screenshot(path=str(output/f'companies-{width}-{theme}.png'))
+                            active.get_by_role('link',name='View match',exact=True).first.click()
+                            page.locator('#job-detail:not([hidden])').wait_for()
+                            self.assertEqual(page.locator('#job-detail').get_attribute('data-job-id'),active.locator('[data-role-id]').first.get_attribute('data-role-id'))
+                    page.get_by_role('button',name='Apply filters',exact=True).click()
+                    self.assertIn('min_score=',page.url)
+                    self.assertIn('sort=recent',page.url)
+                    page.locator('.jobs-filter-actions').get_by_role('link',name='Reset',exact=True).click()
+                    self.assertEqual(urlsplit(page.url).query,'')
+                finally:
+                    context.close()
+            finally:
+                browser.close()
+
     def coffee_palette(self):
         root=Path(__file__).resolve().parents[1]
         output=root/'tests/artifacts/coffee-palette'
@@ -221,4 +282,4 @@ class AdminBrowserChecks(test_admin_integration.AdminIntegrationTests):
 
 
 def load_tests(loader, tests, pattern):
-    return unittest.TestSuite([AdminBrowserChecks('header_controls'), AdminBrowserChecks('browser_checks'), AdminBrowserChecks('coffee_palette')])
+    return unittest.TestSuite([AdminBrowserChecks('header_controls'), AdminBrowserChecks('browser_checks'), AdminBrowserChecks('coffee_palette'), AdminBrowserChecks('jobs_filters')])
