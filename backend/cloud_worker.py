@@ -326,6 +326,14 @@ def register_routes(application, connection, database):
         if user is None:
             return {"items": [], "next": None}
         items = []
+        def empty_work():
+            payload = {'items': [], 'next': user['id']}
+            task = conn.execute("SELECT revision FROM matching_tasks WHERE user_id=? AND status<>'complete'", (user['id'],)).fetchone()
+            if task and not company_values:
+                payload['empty_task'] = dict(user_id=user['id'], revision=task['revision'],
+                                             fingerprint=fingerprint(dict(user)))
+            return payload
+
         profile = role_titles.current(conn, user)
         candidates = pipeline.filter_candidate_jobs(conn, role_titles.filtering_user(user, profile))
         if company_values:
@@ -333,7 +341,7 @@ def register_routes(application, connection, database):
             candidates = [job for job in candidates if job["company_id"] in company_ids]
         if not candidates and (profile is not None or conn.execute(
                 'SELECT 1 FROM user_settings WHERE user_id=? AND subscriptions_configured=1', (user['id'],)).fetchone()):
-            return {"items": [], "next": user["id"]}
+            return empty_work()
         if profile is None:
             required_user = dict(user)
             required_user["name"] = conn.execute("SELECT name FROM users WHERE id=?", (user["id"],)).fetchone()[0]
@@ -345,9 +353,33 @@ def register_routes(application, connection, database):
             items.append(dict(user=dict(user), job=dict(job), company_name=company[0],
                               fingerprint=fingerprint(work_identity(user, job))))
         payload = {"items": items, "next": user["id"]}
+        if not items:
+            payload = empty_work()
         if len(json.dumps(payload).encode()) > MAX_BODY_BYTES:
             raise ValueError("Work batch exceeds transfer limit")
         return payload
+
+    @routes.post('/complete-empty')
+    def complete_empty():
+        data = body()
+        uid = positive_id(data.get('user_id'))
+        revision = data.get('revision')
+        if type(revision) is not int or revision < 0:
+            raise ValueError('Invalid task revision')
+        conn = connection()
+        with run_pipeline.exclusive_cycle(Path(database).parent / 'pipeline.lock'), conn:
+            conn.execute('BEGIN IMMEDIATE')
+            user = eligible_user(conn, uid)
+            task = conn.execute('SELECT revision FROM matching_tasks WHERE user_id=?', (uid,)).fetchone()
+            if user is None or task is None or task['revision'] != revision or data.get('fingerprint') != fingerprint(dict(user)):
+                return {'completed': False}
+            profile = role_titles.current(conn, user)
+            candidates = pipeline.filter_candidate_jobs(conn, role_titles.filtering_user(user, profile))
+            if (profile is None and candidates) or (profile is not None and role_titles.select(candidates, profile)):
+                return {'completed': False}
+            conn.execute("UPDATE matching_tasks SET status='complete',last_error=NULL,updated_at=? WHERE user_id=? AND revision=?",
+                         (datetime.now(timezone.utc).isoformat(), uid, revision))
+        return {'completed': True}
 
     @routes.post("/rescore-boilerplate")
     def rescore_boilerplate():

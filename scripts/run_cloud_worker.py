@@ -6,6 +6,8 @@ No private response bodies or external exception messages are logged.
 
 import argparse
 from concurrent.futures import Future, ThreadPoolExecutor
+from collections import deque
+from contextlib import contextmanager
 import json
 import logging
 import os
@@ -27,6 +29,7 @@ EMAIL_SECONDS = 7 * 60
 MAX_SCORES = 100
 MAX_ACCOUNTS = 1000
 MAX_DETERMINISTIC_SCORE_WORKERS = 2
+MAX_FETCH_WORKERS = 4
 CANDIDATE_HTTP_STATUSES = frozenset({400, 413, 422})
 GROQ_EVALUATION_RESERVE = 240  # Status reports, one evaluation, hosted save and headroom.
 TAVILY_CYCLE_SECONDS = 300
@@ -325,6 +328,50 @@ def fetch_and_score(client, deadline, fetch_only=False, *, provider="groq"):
             pool.publish("complete" if result == 0 else "deferred")
 
 
+def _download_company(company, deadline, stop):
+    if stop is not None and stop.is_set() or time.monotonic() >= deadline - 120:
+        raise RuntimeError('Fetch cancelled or time budget exhausted')
+    if (not isinstance(company, dict) or type(company.get('id')) is not int or
+            company.get('ats_type') not in ('greenhouse', 'lever', 'ashby') or
+            not isinstance(company.get('board_slug'), str) or
+            not 1 <= len(company['board_slug']) <= 300 or
+            not (all(char.isascii() and (char.isalnum() or char in '-_') for char in company['board_slug'])
+                 or company['ats_type'] == 'ashby' and company['board_slug'] == 'mecka.ai')):
+        raise ValueError('Invalid board configuration')
+    source = company.get('career_source')
+    if source is not None and source not in career_sources.SOURCES:
+        raise ValueError('Unknown career source')
+    return (career_sources.fetch(source, deadline - 120) if source else
+            pipeline.fetch_jobs_for_company(company))
+
+
+@contextmanager
+def parallel_downloads(companies, deadline, stop):
+    """Bound downloads and buffered results; the caller alone writes snapshots."""
+    executor = ThreadPoolExecutor(max_workers=MAX_FETCH_WORKERS, thread_name_prefix='company-fetch')
+    pending = deque()
+    iterator = iter(companies)
+
+    def submit_next():
+        company = next(iterator, None)
+        if company is not None:
+            pending.append((company, executor.submit(_download_company, company, deadline, stop)))
+
+    def results():
+        while pending:
+            company, future = pending.popleft()
+            yield company, future
+            if stop is None or not stop.is_set():
+                submit_next()
+
+    try:
+        for _ in range(MAX_FETCH_WORKERS):
+            submit_next()
+        yield results()
+    finally:
+        executor.shutdown(wait=True, cancel_futures=True)
+
+
 def _fetch_and_score(client, deadline, fetch_only, pool, stop=None, *, allow_partial=False):
     if not fetch_only and getattr(pool, "requires_groq", True) and not pipeline.GROQ_API_KEY.strip():
         raise ValueError("Configure Groq before matching")
@@ -339,46 +386,47 @@ def _fetch_and_score(client, deadline, fetch_only, pool, stop=None, *, allow_par
     if tavily_keys and (stop is None or not stop.is_set()):
         # This pass has its own budget; ATS fetching remains independent of search coverage.
         discover_roles(client, tavily_keys, min(deadline - 120, time.monotonic() + TAVILY_CYCLE_SECONDS), stop)
-    for company in companies:
-        if stop is not None and stop.is_set():
-            return 1
-        if time.monotonic() >= deadline - 120:
-            logger.error("Fetching time budget reached; unfinished work waits until the next scheduled run")
-            return 1
-        stage = "configuration"
-        try:
-            if (not isinstance(company, dict) or type(company.get("id")) is not int or
-                    company.get("ats_type") not in ("greenhouse", "lever", "ashby") or
-                    not isinstance(company.get("board_slug"), str) or
-                    not company["board_slug"] or len(company["board_slug"]) > 300 or
-                    not all(character.isascii() and (character.isalnum() or character in "-_")
-                            for character in company["board_slug"])):
-                raise ValueError("Invalid board configuration")
-            stage = "fetch"
-            source = company.get('career_source')
-            if source is not None and source not in career_sources.SOURCES:
-                raise ValueError('Unknown career source')
-            jobs = (career_sources.fetch(source, deadline - 120) if source else
-                    pipeline.fetch_jobs_for_company(company))
-            stage = "snapshot"
-            mode = mode_for_source(source)
-            jobs = deduplicate(jobs, mode)
-            envelope = dict(company_id=company['id'], fingerprint=company['fingerprint'], mode=mode)
-            batches = (observation_batches(envelope, jobs, MAX_JOBS, MAX_BODY_BYTES)
-                       if mode == 'observed' else [dict(envelope, jobs=jobs)])
-            for batch in batches:
-                if time.monotonic() >= deadline:
-                    raise ValueError('Observation transfer time budget exhausted')
-                client.call('snapshot', batch)
-            successful.add(company["id"])
-            logger.info("Fetched company_id=%s jobs=%s", company["id"], len(jobs))
-        except (requests.RequestException, ValueError, KeyError, TypeError, RuntimeError) as error:
-            response = error.response if isinstance(error, requests.RequestException) else None
-            company_id = company.get("id") if isinstance(company, dict) else None
-            logger.error("Board operation failed: company_id=%s stage=%s error=%s http_status=%s; previous jobs retained if snapshot was not accepted",
-                         company_id if type(company_id) is int else "invalid", stage, type(error).__name__,
-                         response.status_code if response is not None else "unavailable")
-            failed = True
+    with parallel_downloads(companies, deadline, stop) as downloads:
+        for company, downloaded in downloads:
+            if stop is not None and stop.is_set():
+                return 1
+            if time.monotonic() >= deadline - 120:
+                logger.error("Fetching time budget reached; unfinished work waits until the next scheduled run")
+                return 1
+            stage = "configuration"
+            try:
+                if (not isinstance(company, dict) or type(company.get("id")) is not int or
+                        company.get("ats_type") not in ("greenhouse", "lever", "ashby") or
+                        not isinstance(company.get("board_slug"), str) or
+                        not company["board_slug"] or len(company["board_slug"]) > 300 or
+                        not (all(character.isascii() and (character.isalnum() or character in "-_")
+                                 for character in company["board_slug"])
+                             or company['ats_type'] == 'ashby' and company['board_slug'] == 'mecka.ai')):
+                    raise ValueError("Invalid board configuration")
+                stage = "fetch"
+                source = company.get('career_source')
+                if source is not None and source not in career_sources.SOURCES:
+                    raise ValueError('Unknown career source')
+                jobs = downloaded.result()
+                stage = "snapshot"
+                mode = mode_for_source(source)
+                jobs = deduplicate(jobs, mode)
+                envelope = dict(company_id=company['id'], fingerprint=company['fingerprint'], mode=mode)
+                batches = (observation_batches(envelope, jobs, MAX_JOBS, MAX_BODY_BYTES)
+                           if mode == 'observed' else [dict(envelope, jobs=jobs)])
+                for batch in batches:
+                    if time.monotonic() >= deadline:
+                        raise ValueError('Observation transfer time budget exhausted')
+                    client.call('snapshot', batch)
+                successful.add(company["id"])
+                logger.info("Fetched company_id=%s jobs=%s", company["id"], len(jobs))
+            except (requests.RequestException, ValueError, KeyError, TypeError, RuntimeError) as error:
+                response = error.response if isinstance(error, requests.RequestException) else None
+                company_id = company.get("id") if isinstance(company, dict) else None
+                logger.error("Board operation failed: company_id=%s stage=%s error=%s http_status=%s; previous jobs retained if snapshot was not accepted",
+                             company_id if type(company_id) is int else "invalid", stage, type(error).__name__,
+                             response.status_code if response is not None else "unavailable")
+                failed = True
     logger.info("Fetch summary: boards_succeeded=%s boards_total=%s partial_failure=%s",
                 len(successful), len(companies), failed)
     if not successful:
@@ -529,6 +577,13 @@ def _score_pending(client, deadline, pool, successful=None, failed=False, stop=N
             return 0 if queued else int(failed)
         after = next_id
         accounts += 1
+        if not items and queued and 'empty_task' in payload:
+            acknowledgement = payload['empty_task']
+            if not isinstance(acknowledgement, dict) or acknowledgement.get('user_id') != after:
+                raise ValueError('Invalid empty-task acknowledgement')
+            reply = client.call('complete-empty', acknowledgement)
+            if type(reply.get('completed')) is not bool:
+                raise ValueError('Invalid empty-task completion response')
         pending_scores = []
         budget_reached = False
         for item in items:

@@ -13,6 +13,81 @@ from tests import test_cloud_worker, test_evaluation
 
 
 class QueueDiagnosticTests(unittest.TestCase):
+    def test_parallel_downloads_overlap_and_bound_inflight_work(self):
+        barrier = threading.Barrier(runner.MAX_FETCH_WORKERS)
+        lock = threading.Lock()
+        counts = {'active': 0, 'peak': 0}
+        def download(company, deadline, stop):
+            with lock:
+                counts['active'] += 1
+                counts['peak'] = max(counts['peak'], counts['active'])
+            try:
+                barrier.wait(timeout=5)
+                return [company['id']]
+            finally:
+                with lock:
+                    counts['active'] -= 1
+        companies = [dict(id=index) for index in range(runner.MAX_FETCH_WORKERS * 2)]
+        with patch.object(runner, '_download_company', side_effect=download):
+            with runner.parallel_downloads(companies, runner.time.monotonic()+3000, None) as downloads:
+                results = [future.result(timeout=6) for company, future in downloads]
+        self.assertEqual(results, [[index] for index in range(len(companies))])
+        self.assertEqual(counts['peak'], runner.MAX_FETCH_WORKERS)
+
+    def test_stale_reasons_follow_current_filters_and_keep_history(self):
+        from backend.queue_diagnostics import stale_page
+        self.assertEqual({r['reason'] for r in stale_page(self.conn, 30, 0)}, {'Eligible for rescoring'})
+        self.conn.execute('UPDATE jobs SET is_active=0 WHERE id=1')
+        self.preferences(roles=['Unrelated role'])
+        reasons = {r['job_id']: r['reason'] for r in stale_page(self.conn, 30, 0)}
+        self.assertEqual(reasons[1], 'Job inactive')
+        self.assertEqual(reasons[2], 'Selected role mismatch')
+        self.assertEqual(len(stale_page(self.conn, 1, 1)), 1)
+        self.assertEqual(self.conn.execute('SELECT COUNT(*) FROM scores WHERE is_stale=1').fetchone()[0], 2)
+
+    def test_worker_acknowledges_empty_queue_and_endpoint_requires_authentication(self):
+        from backend import matching_tasks
+        from datetime import datetime, timezone
+        self.preferences(roles=['Unrelated role'])
+        matching_tasks.enqueue(self.conn, 1, 'backlog', datetime.now(timezone.utc))
+        self.conn.commit()
+        client = MagicMock()
+        client.call.side_effect = self.call
+        pool = MagicMock()
+        self.assertEqual(runner._score_pending(client, runner.time.monotonic() + 3000, pool), 0)
+        self.assertTrue(any(call.args[0] == 'complete-empty' for call in client.call.call_args_list))
+        pool.score.assert_not_called()
+        self.assertEqual(self.conn.execute('SELECT status FROM matching_tasks WHERE user_id=1').fetchone()[0], 'complete')
+        with self.client.post('/internal/worker/complete-empty', json={}) as response:
+            self.assertEqual(response.status_code, 401)
+
+    def test_empty_ack_rechecks_revision_preferences_and_new_jobs(self):
+        from backend import matching_tasks
+        from datetime import datetime, timezone
+        self.preferences(roles=['Unrelated role'])
+        matching_tasks.enqueue(self.conn, 1, 'backlog', datetime.now(timezone.utc))
+        self.conn.commit()
+        acknowledgement = self.call('work')['empty_task']
+        matching_tasks.enqueue(self.conn, 1, 'postings', datetime.now(timezone.utc))
+        self.conn.commit()
+        self.assertFalse(self.call('complete-empty', acknowledgement)['completed'])
+        acknowledgement = self.call('work')['empty_task']
+        self.preferences()
+        self.assertFalse(self.call('complete-empty', acknowledgement)['completed'])
+        self.preferences(roles=['Unrelated role'])
+        acknowledgement = self.call('work')['empty_task']
+        self.conn.execute("UPDATE jobs SET title='Unrelated role' WHERE id=1")
+        user = self.conn.execute('SELECT * FROM users WHERE id=1').fetchone()
+        from tests.test_cloud_worker import title_profile
+        role_titles.save(self.conn, user, title_profile(['Unrelated role', 'Backend Engineer', 'Frontend Engineer', 'Data Analyst', 'QA Engineer']))
+        self.conn.commit()
+        self.assertFalse(self.call('complete-empty', acknowledgement)['completed'])
+        self.conn.execute('UPDATE jobs SET is_active=0')
+        self.conn.commit()
+        acknowledgement = self.call('work')['empty_task']
+        self.assertTrue(self.call('complete-empty', acknowledgement)['completed'])
+        self.assertEqual(self.conn.execute('SELECT status FROM matching_tasks WHERE user_id=1').fetchone()[0], 'complete')
+
     def setUp(self):
         test_cloud_worker.CloudEndpointTests.setUp(self)
 

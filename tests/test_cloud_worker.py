@@ -535,9 +535,12 @@ class CloudEndpointTests(unittest.TestCase):
             conn = self.conn
             def close(inner):
                 inner.closed = True
+        # Download threads must not access the main thread's SQLite fixture connection.
+        fixture_rows = {}
+        for row in self.conn.execute('SELECT * FROM jobs ORDER BY id'):
+            fixture_rows.setdefault(row['company_id'], dict(row))
         def fetched(company):
-            row = self.conn.execute("SELECT * FROM jobs WHERE company_id=? ORDER BY id LIMIT 1",
-                                    (company["id"],)).fetchone()
+            row = fixture_rows[company['id']]
             return [dict(external_id=row["external_id"], title=row["title"], location=row["location"],
                          url=row["url"], raw_json=json.loads(row["raw_json"]))]
         with patch.object(local_embeddings, "LocalScorer", return_value=LocalScorer()), \

@@ -17,6 +17,18 @@ from scripts import seed_companies as importer
 
 
 class CompanySeedTests(unittest.TestCase):
+    def test_missing_board_import_adds_thirty_without_replacing_existing_identity(self):
+        with closing(sqlite3.connect(':memory:')) as conn:
+            conn.executescript(SCHEMA)
+            conn.execute("INSERT INTO companies(id,name,ats_type,board_slug) VALUES(99,'Existing Mercor','ashby','mercor')")
+            conn.commit()
+            from scripts.import_missing_boards import import_boards
+            import_boards(conn)
+            self.assertEqual(conn.execute("SELECT id,name FROM companies WHERE ats_type='ashby' AND board_slug='mercor'").fetchall(), [(99, 'Existing Mercor')])
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM companies').fetchone()[0], 30)
+            import_boards(conn)
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM companies').fetchone()[0], 30)
+
     def test_major_company_catalog_is_idempotent_and_preserves_cvent_subscriptions(self):
         with closing(sqlite3.connect(':memory:')) as conn:
             conn.execute('PRAGMA foreign_keys=ON')

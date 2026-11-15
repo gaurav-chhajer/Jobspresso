@@ -407,7 +407,7 @@ Start the unified worker using private configuration:
 .\.venv\Scripts\python.exe -B -m scripts.start_hosted_worker
 ```
 
-One local process owns independent fetching and scoring/email loops. The default deterministic provider uses these concurrent loops too: scoring reads the existing queue immediately, and each accepted job snapshot wakes it without waiting for the remaining company fetches. One-shot and fetch-only commands retain their sequential, bounded behavior. Fetches target
+One local process owns independent fetching and scoring/email loops. The default deterministic provider uses these concurrent loops too: scoring reads the existing queue immediately, and each accepted job snapshot wakes it without waiting for the remaining company fetches. Company downloads run with at most four concurrent requests and four buffered company results; snapshot writes remain serialized. One-shot and fetch-only commands use the same bounded parallel downloads. Shutdown cancels pending downloads and waits for in-flight requests to finish within their existing source timeouts. Inactive and discovery-only catalog records are excluded; blocked or unverified sources require verification before activation. Fetches target
 five-minute intervals measured from their start; an overrun finishes before the
 next fetch starts, without overlapping fetches. Scoring continues while boards
 are downloaded. Successful snapshots enter the hosted pending queue immediately;
@@ -988,6 +988,21 @@ command in GitHub Actions after switching the workflow step for a reviewed rollb
 ## Personal local application worker
 
 ### Admin workflow monitor
+
+To import the thirty verified missing ATS boards on an existing hosted database,
+run `.venv/bin/python -B -m scripts.import_missing_boards` from the project
+directory after deployment. It takes the pipeline lock, creates a unique private
+backup, checks its integrity, and inserts missing boards without replacing
+existing company IDs or activation settings. It makes no provider requests and
+does not send emails. Restart the updated PC worker to load parallel fetching.
+
+The Matching queue page lists stale scores in pages of 30 with their current
+exclusion reason, including inactive jobs, subscriptions, preferences, and
+role-family aliases. Excluded historical scores remain stale. The hosted worker
+acknowledges empty tasks through an authenticated POST; the server rechecks task
+revision, resume/preferences, and current eligibility under its database write
+lock before completing the task. Deploy the server before restarting the updated
+PC worker. Older workers can still score but do not acknowledge empty tasks.
 
 Administrators have a **Workflow monitor** navigation tab at
 `/admin/workflow-monitor`. The route requires an authenticated admin account and

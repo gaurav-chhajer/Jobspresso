@@ -39,6 +39,16 @@ class AdminIntegrationTests(unittest.TestCase):
                 self.assertNotIn(b'Kaveri Pay',response.data)
                 self.assertIn(b'Audit log',response.data)
 
+    def test_queue_explains_inactive_stale_scores_without_resume_text(self):
+        self.conn.execute('UPDATE scores SET is_stale=1')
+        self.conn.execute('UPDATE jobs SET is_active=0 WHERE id=1')
+        self.conn.commit()
+        with self.client.get('/admin/area/queue') as response:
+            self.assertEqual(response.status_code, 200)
+            self.assertIn(b'Stale score reasons', response.data)
+            self.assertIn(b'Job inactive', response.data)
+            self.assertNotIn(b'Python resume', response.data)
+
     def test_student_email_prefix_never_grants_admin(self):
         self.second_user()
         with self.client.session_transaction() as session:

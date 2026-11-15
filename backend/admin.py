@@ -162,10 +162,13 @@ def register_routes(app, connection, context, now, database, uploads):
             data['admin_users'] = rows[:PAGE_SIZE]
             data['epoch'] = int(stamp.timestamp())
         elif page == 'queue':
+            from backend.queue_diagnostics import stale_page
+            data['stale_details'] = stale_page(conn, PAGE_SIZE + 1, offset)
             section('Matching tasks', ('State', 'Count'), 'SELECT status,COUNT(*) FROM matching_tasks GROUP BY status')
             section('Tasks by reason', ('Reason', 'Count'), 'SELECT reason,COUNT(*) FROM matching_tasks GROUP BY reason')
             data['failed_tasks'] = conn.execute("SELECT user_id,reason,last_error,revision,updated_at FROM matching_tasks WHERE status='failed' ORDER BY updated_at LIMIT ? OFFSET ?", (PAGE_SIZE+1,offset)).fetchall()
-            data['admin_more'] = len(data['failed_tasks'])>PAGE_SIZE
+            data['admin_more'] = len(data['failed_tasks'])>PAGE_SIZE or len(data['stale_details'])>PAGE_SIZE
+            data['stale_details'] = data['stale_details'][:PAGE_SIZE]
             data['failed_tasks'] = data['failed_tasks'][:PAGE_SIZE]
             data['stale'] = conn.execute('SELECT COUNT(*) FROM scores WHERE is_stale=1').fetchone()[0]
         elif page == 'companies':
