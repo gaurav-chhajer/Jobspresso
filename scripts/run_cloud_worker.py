@@ -5,9 +5,11 @@ No private response bodies or external exception messages are logged.
 """
 
 import argparse
+from concurrent.futures import Future, ThreadPoolExecutor
 import json
 import logging
 import os
+import threading
 import time
 import uuid
 
@@ -24,6 +26,7 @@ FETCH_SECONDS = 20 * 60
 EMAIL_SECONDS = 7 * 60
 MAX_SCORES = 100
 MAX_ACCOUNTS = 1000
+MAX_DETERMINISTIC_SCORE_WORKERS = 2
 CANDIDATE_HTTP_STATUSES = frozenset({400, 413, 422})
 GROQ_EVALUATION_RESERVE = 240  # Status reports, one evaluation, hosted save and headroom.
 TAVILY_CYCLE_SECONDS = 300
@@ -171,7 +174,7 @@ class GroqKeyPool:
 
 
 class DeterministicScoringPool:
-    """Local deterministic fit scores, with Groq reserved for missing title profiles."""
+    """Parallel local fit scoring, with Groq reserved for missing title profiles."""
     requires_groq = False
 
     def __init__(self, client, deadline, scorer=None):
@@ -180,9 +183,36 @@ class DeterministicScoringPool:
         self.scorer = scorer if scorer is not None else LocalScorer()
         self.owns_scorer = scorer is None
         self.title_pool = None
+        self.parallel_enabled = getattr(self.scorer, "model", None) is not None
+        self.executor = (ThreadPoolExecutor(max_workers=MAX_DETERMINISTIC_SCORE_WORKERS,
+                                            thread_name_prefix="deterministic-score")
+                         if self.parallel_enabled else None)
+        self.worker_scorers = []
+        self.worker_scorers_lock = threading.Lock()
+        self.worker_state = threading.local()
 
     def score(self, user, job, company_name):
-        return pipeline.score_job_deterministic(user, job, company_name, self.scorer)
+        return self.submit(user, job, company_name).result()
+
+    def submit(self, user, job, company_name):
+        if not self.parallel_enabled:
+            future = Future()
+            try:
+                future.set_result(pipeline.score_job_deterministic(user, job, company_name, self.scorer))
+            except Exception as error:
+                future.set_exception(error)
+            return future
+        return self.executor.submit(self._score, user, job, company_name)
+
+    def _score(self, user, job, company_name):
+        scorer = getattr(self.worker_state, "scorer", None)
+        if scorer is None:
+            from backend.local_embeddings import LocalScorer
+            scorer = LocalScorer(model=self.scorer.model, check_same_thread=False)
+            self.worker_state.scorer = scorer
+            with self.worker_scorers_lock:
+                self.worker_scorers.append(scorer)
+        return pipeline.score_job_deterministic(user, job, company_name, scorer)
 
     def suggest_titles(self, user):
         if self.title_pool is None:
@@ -190,12 +220,30 @@ class DeterministicScoringPool:
         return self.title_pool.suggest_titles(user)
 
     def close(self, result):
+        if self.executor is not None:
+            self.executor.shutdown(wait=True, cancel_futures=result != 0)
+        cleanup_error = None
+        for scorer in self.worker_scorers:
+            try:
+                scorer.close()
+            except Exception as error:
+                if cleanup_error is None:
+                    cleanup_error = error
         try:
             if self.title_pool is not None and not self.title_pool.reporting_failed:
                 self.title_pool.publish("complete" if result == 0 else "deferred")
+        except Exception as error:
+            if cleanup_error is None:
+                cleanup_error = error
         finally:
             if self.owns_scorer:
-                self.scorer.close()
+                try:
+                    self.scorer.close()
+                except Exception as error:
+                    if cleanup_error is None:
+                        cleanup_error = error
+        if cleanup_error is not None:
+            raise cleanup_error
 
 
 class HostedClient:
@@ -481,11 +529,16 @@ def _score_pending(client, deadline, pool, successful=None, failed=False, stop=N
             return 0 if queued else int(failed)
         after = next_id
         accounts += 1
+        pending_scores = []
+        budget_reached = False
         for item in items:
             if stop is not None and stop.is_set():
                 return 1
             if scores + title_requests >= MAX_SCORES or time.monotonic() >= deadline - 120:
                 if queued:
+                    if pending_scores:
+                        budget_reached = True
+                        break
                     logger.info("Queue batch budget reached; pending jobs remain stored for the next batch.")
                     return 0
                 logger.error("Scoring budget reached; remaining scores deferred")
@@ -562,8 +615,11 @@ def _score_pending(client, deadline, pool, successful=None, failed=False, stop=N
                     if not detail['eligible']:
                         continue
                     item = dict(item, job=detail['job'], fingerprint=detail['fingerprint'])
-                # Only an explicit Groq rate-limit rejection permits advancing a key.
                 stage = "evaluation"
+                if isinstance(pool, DeterministicScoringPool):
+                    pending_scores.append((item, pool.submit(item["user"], item["job"], item["company_name"])))
+                    continue
+                # Only an explicit Groq rate-limit rejection permits advancing a key.
                 result = pool.score(item["user"], item["job"], item["company_name"])
                 stage = "save"
                 client.call("score", dict(user_id=item["user"]["id"], job_id=item["job"]["id"],
@@ -594,6 +650,42 @@ def _score_pending(client, deadline, pool, successful=None, failed=False, stop=N
                     candidate_failures += 1
                     continue
                 return 1
+        for item, future in pending_scores:
+            if stop is not None and stop.is_set():
+                return 1
+            stage = "evaluation"
+            try:
+                result = future.result()
+                stage = "save"
+                client.call("score", dict(user_id=item["user"]["id"], job_id=item["job"]["id"],
+                                          fingerprint=item["fingerprint"], result=result))
+                saved += 1
+                logger.info("Saved score user_id=%s job_id=%s", item["user"]["id"], item["job"]["id"])
+            except groq_limits.CooldownPending:
+                raise
+            except (requests.RequestException, ValueError, KeyError, TypeError, RuntimeError) as error:
+                response = error.response if isinstance(error, requests.RequestException) else None
+                status = (response.status_code if response is not None else
+                          error.status if isinstance(error, HostedOperationError) else None)
+                if queued and isinstance(error, HostedInputsChanged) and stage == "save":
+                    logger.info("Queue inputs changed: user_id=%s job_id=%s stage=%s; rejected result discarded, latest job remains pending.",
+                                after, item["job"]["id"], stage)
+                    continue
+                candidate_failure = stage == "evaluation" and (
+                    isinstance(error, (ValueError, KeyError, TypeError)) or
+                    (isinstance(error, requests.HTTPError) and status in CANDIDATE_HTTP_STATUSES))
+                logger.error("Scoring operation failed: user_id=%s job_id=%s stage=%s error=%s http_status=%s; %s",
+                             after, item["job"]["id"], stage, type(error).__name__,
+                             status if status is not None else "unavailable",
+                             "candidate deferred; continuing" if candidate_failure else "remaining work deferred")
+                if candidate_failure:
+                    failed = True
+                    candidate_failures += 1
+                    continue
+                return 1
+        if budget_reached:
+            logger.info("Queue batch budget reached; pending jobs remain stored for the next batch.")
+            return 0
     if queued:
         logger.info("Queue account budget reached; remaining work stays stored for the next batch.")
         return 0

@@ -5,7 +5,9 @@ import math
 import sys
 import re
 import tempfile
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
@@ -122,3 +124,23 @@ class SimilarityTests(unittest.TestCase):
                 self.assertIs(local_embeddings.load_model(), loaded)
                 self.assertIs(local_embeddings.load_model(), loaded)
                 constructor.assert_called_once()
+
+    def test_parallel_scorers_share_cache_without_duplicate_embedding_rows(self):
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as directory:
+            database = Path(directory) / "cache.db"
+            model = Model()
+            scorers = [local_embeddings.LocalScorer(model, database, check_same_thread=False)
+                       for _ in range(2)]
+            barrier = threading.Barrier(2)
+            try:
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    futures = [executor.submit(lambda scorer=scorer: (
+                        barrier.wait(timeout=3), scorer.embedding("shared JD text", "jd"))[1])
+                               for scorer in scorers]
+                    vectors = [future.result(timeout=5) for future in futures]
+                self.assertEqual(vectors[0], vectors[1])
+                self.assertEqual(scorers[0].conn.execute(
+                    "SELECT COUNT(*) FROM embeddings WHERE owner='jd'").fetchone()[0], 1)
+            finally:
+                for scorer in scorers:
+                    scorer.close()

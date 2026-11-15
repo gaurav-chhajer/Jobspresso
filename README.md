@@ -412,6 +412,11 @@ five-minute intervals measured from their start; an overrun finishes before the
 next fetch starts, without overlapping fetches. Scoring continues while boards
 are downloaded. Successful snapshots enter the hosted pending queue immediately;
 partial board failures are logged and retain previous data without blocking scoring.
+The deterministic scoring loop evaluates up to two candidates concurrently per
+account batch using separate SQLite cache connections. Hosted score writes remain
+serialized, and the shared local embedding model keeps its existing encode lock.
+The optional Groq scoring provider remains sequential to preserve its shared
+key and quota state.
 Complete fetch failure or exhausted budgets stop that loop for review.
 Transient timeouts, connection failures, and HTTP 502/503/504 on the read-only
 hosted `companies` and `work` endpoints get at most three attempts, waiting 30

@@ -453,6 +453,103 @@ class QueuedScoringTests(unittest.TestCase):
         pool.return_value.score.assert_called_once()
         pool.return_value.publish.assert_called_once_with('complete')
 
+    def test_deterministic_queue_scores_candidates_concurrently_and_saves_in_order(self):
+        items = [self.item(1), self.item(2)]
+        client = MagicMock()
+        saved = []
+        def hosted_call(path, data=None):
+            if path == 'work?after=0':
+                return dict(next=1, items=items)
+            if path == 'score':
+                saved.append(data['job_id'])
+                return {'saved': True}
+            if path == 'work?after=1':
+                return dict(next=None, items=[])
+            self.fail('Unexpected hosted operation: ' + path)
+        client.call.side_effect = hosted_call
+        barrier = threading.Barrier(2)
+        scored_threads = set()
+        worker_scorers = []
+        thread_lock = threading.Lock()
+        main_scorer = MagicMock()
+        main_scorer.model = object()
+
+        def create_worker_scorer(model, check_same_thread):
+            self.assertIs(model, main_scorer.model)
+            self.assertFalse(check_same_thread)
+            scorer = MagicMock()
+            scorer.model = model
+            worker_scorers.append(scorer)
+            return scorer
+
+        def score(user, job, company_name, scorer):
+            with thread_lock:
+                scored_threads.add(threading.get_ident())
+            barrier.wait(timeout=3)
+            return {'fit_score': job['id']}
+
+        pool = runner.DeterministicScoringPool(client, 3000, scorer=main_scorer)
+        try:
+            with patch('backend.local_embeddings.LocalScorer', side_effect=create_worker_scorer), \
+                    patch.object(runner.pipeline, 'score_job_deterministic', side_effect=score), \
+                    patch.object(runner.career_sources, 'prepare_job', side_effect=lambda job, deadline: job), \
+                    patch.object(runner.time, 'monotonic', return_value=0):
+                self.assertEqual(runner._score_pending(client, 3000, pool, stop=threading.Event()), 0)
+        finally:
+            pool.close(0)
+
+        self.assertEqual(len(scored_threads), 2)
+        self.assertEqual(len(worker_scorers), 2)
+        self.assertEqual(saved, [1, 2])
+        for scorer in worker_scorers:
+            scorer.close.assert_called_once()
+
+    def test_deterministic_candidate_failure_does_not_block_other_parallel_scores(self):
+        items = [self.item(1), self.item(2)]
+        client = MagicMock()
+        saved = []
+        def hosted_call(path, data=None):
+            if path == 'work?after=0':
+                return dict(next=1, items=items)
+            if path == 'score':
+                saved.append(data['job_id'])
+                return {'saved': True}
+            if path == 'work?after=1':
+                return dict(next=None, items=[])
+            self.fail('Unexpected hosted operation: ' + path)
+        client.call.side_effect = hosted_call
+        main_scorer = MagicMock()
+        main_scorer.model = object()
+        worker_scorers = []
+
+        def create_worker_scorer(model, check_same_thread):
+            scorer = MagicMock()
+            scorer.model = model
+            worker_scorers.append(scorer)
+            return scorer
+
+        def score(user, job, company_name, scorer):
+            if job['id'] == 1:
+                raise ValueError('candidate-specific failure')
+            return {'fit_score': job['id']}
+
+        pool = runner.DeterministicScoringPool(client, 3000, scorer=main_scorer)
+        try:
+            with patch('backend.local_embeddings.LocalScorer', side_effect=create_worker_scorer), \
+                    patch.object(runner.pipeline, 'score_job_deterministic', side_effect=score), \
+                    patch.object(runner.career_sources, 'prepare_job', side_effect=lambda job, deadline: job), \
+                    patch.object(runner.time, 'monotonic', return_value=0), \
+                    self.assertLogs(runner.logger, level='ERROR') as logs:
+                self.assertEqual(runner._score_pending(client, 3000, pool, stop=threading.Event()), 0)
+        finally:
+            pool.close(0)
+
+        self.assertEqual(saved, [2])
+        self.assertGreaterEqual(len(worker_scorers), 1)
+        self.assertNotIn('candidate-specific failure', '\n'.join(logs.output))
+        for scorer in worker_scorers:
+            scorer.close.assert_called_once()
+
     def test_empty_queue_is_a_successful_batch(self):
         client = MagicMock()
         client.call.return_value = dict(next=None, items=[])

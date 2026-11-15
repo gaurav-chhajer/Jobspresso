@@ -65,11 +65,13 @@ def chunks(text, tokenizer, maximum):
 class LocalScorer:
     """One worker owns the model and SQLite connection, and closes them on exit."""
 
-    def __init__(self, model=None, cache_path=CACHE_PATH):
+    def __init__(self, model=None, cache_path=CACHE_PATH, *, check_same_thread=True):
+        if type(check_same_thread) is not bool:
+            raise ValueError("SQLite thread ownership must be explicit")
         self.model = model if model is not None else load_model()
         path = Path(cache_path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(path, timeout=5)
+        self.conn = sqlite3.connect(path, timeout=5, check_same_thread=check_same_thread)
         try:
             with self.conn:
                 self.conn.execute("""CREATE TABLE IF NOT EXISTS embeddings (
@@ -123,7 +125,7 @@ class LocalScorer:
         vector = normalize(summed)
         known_skills = similarity.skills(text)
         with self.conn:
-            self.conn.execute("INSERT INTO embeddings VALUES(?,?,?,?,?,?)",
+            self.conn.execute("INSERT OR IGNORE INTO embeddings VALUES(?,?,?,?,?,?)",
                               (owner, digest, self.version, json.dumps(vector, allow_nan=False),
                                json.dumps(known_skills), datetime.now(timezone.utc).isoformat()))
             self.conn.execute("DELETE FROM embeddings WHERE rowid <= (SELECT MAX(rowid) FROM embeddings)-?", (MAX_CACHE_ROWS,))
