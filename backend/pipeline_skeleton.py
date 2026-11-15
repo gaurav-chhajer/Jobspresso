@@ -757,6 +757,8 @@ def score_job_deterministic(user_row, job_row, company_name, scorer):
     resume_text = user_row["resume_text"]
     resume_hash = deterministic_store.content_hash(resume_text)
     jd_hash = deterministic_store.content_hash(description)
+    parsed_jd_hash = deterministic_store.parsed_jd_hash(
+        description, deterministic_scoring.extraction.PARSER_VERSION)
     score_jd_hash = deterministic_store.content_hash(job["title"] + "\n" + description)
     as_of = date.today()
     version = deterministic_scoring.cache_version(
@@ -769,10 +771,10 @@ def score_job_deterministic(user_row, job_row, company_name, scorer):
             cached.get("weights_version") == deterministic_scoring.WEIGHTS_VERSION):
         cached["weights"] = dict(deterministic_scoring.WEIGHTS)
     if cached is None:
-        requirements = deterministic_store.get_jd_requirements(conn, jd_hash)
+        requirements = deterministic_store.get_jd_requirements(conn, parsed_jd_hash)
         if requirements is None:
             requirements = deterministic_scoring.extraction.extract_jd_requirements(description)
-            deterministic_store.put_jd_requirements(conn, jd_hash, requirements)
+            deterministic_store.put_jd_requirements(conn, parsed_jd_hash, requirements)
         semantic = semantic_similarity.section_similarity(
             resume_text, description, scorer, resume_owner=resume_hash, jd_owner=jd_hash)
         resume_mentions = deterministic_scoring.extraction.extract_skill_mentions(resume_text)

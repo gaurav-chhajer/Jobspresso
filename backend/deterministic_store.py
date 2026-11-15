@@ -12,6 +12,12 @@ def content_hash(text):
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def parsed_jd_hash(text, parser_version):
+    if not isinstance(parser_version, str) or not parser_version.strip():
+        raise ValueError("Parser version must be nonempty text")
+    return content_hash(parser_version + "\n" + text)
+
+
 def initialize(conn):
     with conn:
         conn.execute("""CREATE TABLE IF NOT EXISTS deterministic_scores (

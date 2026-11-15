@@ -53,3 +53,19 @@ class ExtractionPatchTests(unittest.TestCase):
             for heading in headings:
                 with self.subTest(heading=heading):
                     self.assertEqual(extraction.split_sections(heading + "\nPython")[0]["name"], section)
+
+    def test_job_boilerplate_is_excluded_but_technical_gaps_remain(self):
+        text = ("What you'll need (Must-haves): Practical experience with Camunda or other BPMN systems.\n"
+                "Nice to Haves: Specialization in Fullstack or Backend.\n"
+                "What We Have to Offer: Benefits & Perks.\n"
+                "Compensation: United States: $143,800 to $231,900; Singapore salary range.\n"
+                "Data Privacy Notice: We note that phone numbers and SMS opt-in data are not shared, "
+                "sold, or rented to third parties or affiliates for marketing purposes.")
+        requirements = extraction.extract_jd_requirements(text)
+        unknowns = {skill for requirement in requirements for skill in requirement["unknown_skills"]}
+        self.assertIn("Camunda", unknowns)
+        self.assertNotIn("What", unknowns)
+        self.assertNotIn("United", unknowns)
+        self.assertFalse(any("salary" in item["text"].casefold() or
+                             "phone numbers" in item["text"].casefold()
+                             for item in requirements))

@@ -141,6 +141,7 @@ def create_app(database_path=None, upload_dir=None):
         jd_text = payload["job_description"]
         resume_hash = deterministic_store.content_hash(resume_text)
         jd_hash = deterministic_store.content_hash(jd_text)
+        parsed_jd_hash = deterministic_store.parsed_jd_hash(jd_text, deterministic_scoring.extraction.PARSER_VERSION)
         score_jd_hash = deterministic_store.content_hash(title + "\n" + jd_text)
         as_of = date.today()
         version = deterministic_scoring.cache_version(
@@ -150,10 +151,10 @@ def create_app(database_path=None, upload_dir=None):
             deterministic_store.initialize(cache_conn)
             cached = deterministic_store.get_score(cache_conn, resume_hash, score_jd_hash, version)
             if cached is None:
-                requirements = deterministic_store.get_jd_requirements(cache_conn, jd_hash)
+                requirements = deterministic_store.get_jd_requirements(cache_conn, parsed_jd_hash)
                 if requirements is None:
                     requirements = deterministic_scoring.extraction.extract_jd_requirements(jd_text)
-                    deterministic_store.put_jd_requirements(cache_conn, jd_hash, requirements)
+                    deterministic_store.put_jd_requirements(cache_conn, parsed_jd_hash, requirements)
                 try:
                     scorer = local_embeddings.LocalScorer(cache_path=local_embeddings.CACHE_PATH)
                 except (RuntimeError, ImportError) as error:
@@ -344,7 +345,8 @@ def create_app(database_path=None, upload_dir=None):
             conn = connection()
             user_id = data["user"]["id"]
             data["company_cards"] = True
-            data["matches"], data["pages"] = store.matches(conn, user_id, data, utc_now())
+            data["matches"], data["pages"] = store.matches(conn, user_id, data, utc_now(), include_stale=True)
+            data["has_stale_matches"] = any(item["is_stale"] for item in data["matches"])
             data["job_locations"] = store.location_suggestions(conn)
             data["company_groups"] = []
             for item in data["matches"]:
@@ -354,7 +356,7 @@ def create_app(database_path=None, upload_dir=None):
             data["saved_searches"] = conn.execute("SELECT id,name,filters_json FROM saved_searches WHERE user_id=? ORDER BY name LIMIT 50", (user_id,)).fetchall()
             data["saved_searches"] = [dict(row, link=url_for("jobs", **json.loads(row["filters_json"]))) for row in data["saved_searches"]]
             if selected_id:
-                row = conn.execute("SELECT " + store.MATCH_COLUMNS + " " + store.MATCH_FROM +
+                row = conn.execute("SELECT " + store.MATCH_COLUMNS + " " + store.MATCH_FROM_BASE +
                     " AND j.id=? AND (?=0 OR EXISTS(SELECT 1 FROM company_subscriptions mine WHERE mine.user_id=s.user_id AND mine.company_id=c.id))",
                     (user_id, user_id, user_id, selected_id, data['only_mine'])).fetchone()
                 if not row:
@@ -363,6 +365,8 @@ def create_app(database_path=None, upload_dir=None):
                 data["selected"] = store.match(row)
             elif data["matches"]:
                 data["selected"] = data["matches"][0]
+            data["has_stale_matches"] = data.get("has_stale_matches", False) or bool(
+                data.get("selected") and data["selected"]["is_stale"])
             if data["selected"]:
                 score_row = conn.execute("""SELECT s.id,s.fit_score,s.reasoning,s.matched_skills,s.missing_requirements,
                         s.evaluation_json,s.deterministic_json,s.scored_at

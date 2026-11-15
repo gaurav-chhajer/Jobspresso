@@ -531,7 +531,8 @@ class WebFlowTests(unittest.TestCase):
                     self.assertNotIn(b'class="hero-banner"', page.data)
                 self.assertNotIn(b'class="spark"', page.data)
                 if route == '/jobs':
-                    self.assertIn(b'No current matches for these filters.', page.data)
+                    self.assertIn(b'Scores are being updated.', page.data)
+                    self.assertIn(b'Score updating', page.data)
                 if route == '/applications':
                     self.assertEqual(page.data.count(b'class="col-empty"'), len(STATUSES))
         self.assertIn(b"0 current resume-to-JD comparisons", self.client.get("/").data)

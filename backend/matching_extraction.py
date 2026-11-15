@@ -26,6 +26,7 @@ TAXONOMY_VERSION = _TAXONOMY["taxonomy_version"]
 IMPLIES = {source: tuple(targets) for source, targets in _TAXONOMY["implies"].items()}
 BLOCKED_SKILL_PAIRS = frozenset(frozenset(pair) for pair in _TAXONOMY["blocked_pairs"])
 FUZZY_SKILL_THRESHOLD = 0.92
+PARSER_VERSION = "jd-requirements-v2"
 
 
 _SECTION_NAMES = {
@@ -40,9 +41,12 @@ _SECTION_NAMES = {
     "requirements": ("requirements", "qualifications", "key requirements", "required skills", "who you are",
                      "minimum qualifications", "basic qualifications", "must have", "must haves", "what you will need", "what you'll need",
                      "what we are looking for", "what we're looking for", "required qualifications"),
+    "non_requirements": ("benefits", "benefits & perks", "benefits and perks", "perks", "compensation",
+                          "salary", "pay", "what we have to offer", "what we offer", "our benefits",
+                          "data privacy notice", "privacy notice", "privacy policy", "equal opportunity"),
     "responsibilities": ("responsibilities", "what you will do", "what you'll do", "the role",
                           "about the role"),
-    "nice_to_have": ("additional experience (not required)", "optional", "optional (not required)", "good to have", "nice-to-have", "preferred", "preferred qualifications", "preferred skills", "nice to have", "bonus points",
+    "nice_to_have": ("additional experience (not required)", "optional", "optional (not required)", "good to have", "nice-to-have", "preferred", "preferred qualifications", "preferred skills", "nice to have", "nice to haves", "nice-to-haves", "bonus points",
                       "additional qualifications"),
     "certifications": ("certifications", "certificates"),
 }
@@ -101,6 +105,7 @@ def normalize_text(value):
 def _section_header(line):
     cleaned = re.sub(r"^[\s#>*\u2022\-]+|[\s:\uff1a]+$", "", line).casefold()
     cleaned = re.sub(r"\s+", " ", cleaned)
+    cleaned = re.sub(r"\s*\((?:must[- ]?haves?|requirements?|required)\)\s*$", "", cleaned)
     return _HEADER_LOOKUP.get(cleaned)
 
 
@@ -158,7 +163,7 @@ _UNKNOWN_STOPWORDS = {"and", "api", "bachelor", "bachelors", "ceo", "cto", "deve
                       "experience", "for", "from", "has", "have", "hiring", "hr", "html", "including",
                       "jd", "join", "mba", "ms", "must", "of", "or", "preferred", "programmer",
                       "proficiency", "required", "role", "software", "sops", "strong", "team", "usa", "with"}
-_UNKNOWN_STOPWORDS.update({"apply", "master", "masters", "computer", "science", "engineering", "education", "knowledge", "familiarity", "minimum", "additional", "proficient", "skills", "tools", "technologies"})
+_UNKNOWN_STOPWORDS.update({"apply", "master", "masters", "computer", "science", "engineering", "education", "knowledge", "familiarity", "minimum", "additional", "proficient", "skills", "tools", "technologies", "what", "nice", "haves", "offer", "benefits", "perks", "compensation", "salary", "united", "states", "kingdom", "singapore", "practical", "specialization"})
 _AMBIGUOUS_SKILLS = frozenset(("Go", "Excel", "REST", "React", "Spring", "Swift", "Room", "Sales", "Marketing"))
 _TECHNICAL_CONTEXT = re.compile(
     r"\b(?:developer|engineer|programmer|software|framework|api|database|programming|application|app|"
@@ -168,6 +173,9 @@ _UNKNOWN_SKILL_CONTEXT = re.compile(
     r"\b(?:software|framework|api|database|programming|code|language|library|stack|tool|platform|"
     r"technology|technical|cloud|web|mobile|developer|engineer|programmer)\b", re.I)
 _URL_PATTERN = re.compile(r"\b(?:https?://|www\.)\S+", re.I)
+_JD_BOILERPLATE = re.compile(
+    r"\b(?:sms opt[- ]in|phone numbers? .*\b(?:third parties|affiliates)|"
+    r"not shared,? sold,? or rented|data privacy notice|equal opportunity employer)\b", re.I)
 _BUSINESS_SKILL_CONTEXT = {
     "Sales": re.compile(r"\b(?:sales (?:strategy|pipeline|operations|process|experience|targets?)|selling)\b", re.I),
     "Marketing": re.compile(r"\b(?:marketing (?:campaigns?|strategy|operations|experience)|digital marketing|content marketing|seo)\b", re.I),
@@ -263,7 +271,7 @@ def _ambiguous_skill_match_allowed(skill, alias, match, line, section):
     return bool(_TECHNICAL_CONTEXT.search(context))
 
 
-def _unknown_terms(line):
+def _unknown_terms(line, *, requirement_context=False):
     known = {normalize_text(alias) for aliases in SKILLS.values() for alias in aliases}
     candidates = set()
     # Unknown proper nouns become scoreable skills only with nearby technical
@@ -282,7 +290,10 @@ def _unknown_terms(line):
                 normalize_text(value) in known or value.isdecimal()):
             continue
         context = without_urls[max(0, match.start() - 36):min(len(without_urls), match.end() + 36)]
-        if not acronym_list and not _UNKNOWN_SKILL_CONTEXT.search(context) and not re.search(r"\b(?:experience with|proficiency in|knowledge of|skills:)\b", without_urls, re.I) and len(without_urls.split()) > 5:
+        requirement_single_term = requirement_context and len(without_urls.split()) <= 2
+        if (not acronym_list and not requirement_single_term and
+                not _UNKNOWN_SKILL_CONTEXT.search(context) and
+                not re.search(r"\b(?:experience with|proficiency in|knowledge of|skills:)\b", without_urls, re.I)):
             continue
         candidates.add(value[:100])
     return sorted(candidates, key=str.casefold)
@@ -345,8 +356,9 @@ def _year_value(value):
 
 _INLINE_JD_HEADING = re.compile(
     r"(?<!\w)(additional experience\s*\(not required\)|optional\s*(?:\(not required\))?|" + "|".join(re.escape(alias) for alias in sorted(
-        {alias for section in ("requirements", "nice_to_have", "responsibilities")
-         for alias in _SECTION_NAMES[section]}, key=len, reverse=True)) + r")\s*:", re.I)
+        {alias for section in ("requirements", "nice_to_have", "responsibilities", "non_requirements")
+         for alias in _SECTION_NAMES[section]}, key=len, reverse=True)) +
+    r")(?:\s*\((?:must[- ]?haves?|requirements?|required)\))?\s*:", re.I)
 
 
 def _requirement_clauses(line, section):
@@ -354,7 +366,8 @@ def _requirement_clauses(line, section):
     offset = 0
     for heading in _INLINE_JD_HEADING.finditer(line):
         yield from _sentence_clauses(line[offset:heading.start()], section)
-        label = heading.group(1).casefold()
+        label = re.sub(r"\s*\((?:must[- ]?haves?|requirements?|required)\)\s*$", "",
+                       heading.group(1).casefold())
         section = "nice_to_have" if "not required" in label or label.startswith("optional") else _HEADER_LOOKUP[label]
         offset = heading.end()
     yield from _sentence_clauses(line[offset:], section)
@@ -380,12 +393,14 @@ def extract_jd_requirements(text, *, job_title=""):
         raise ValueError("Job title must be bounded text")
     requirements = []
     for section in split_sections(text):
+        if section["name"] == "non_requirements":
+            continue
         clauses = ((offset, content, name)
                    for offset, line in enumerate(section["text"].splitlines())
                    for content, name in _requirement_clauses(line, section["name"]))
         for line_offset, line, clause_section in clauses:
             content = line.strip(" \t-*•")
-            if not content:
+            if not content or _JD_BOILERPLATE.search(content):
                 continue
             mentions = extract_skill_mentions(content, section_context=clause_section)
             years = _minimum_years(content)
@@ -397,7 +412,9 @@ def extract_jd_requirements(text, *, job_title=""):
                 "line": section["start_line"] + line_offset,
                 "priority": priority,
                 "skills": [mention["skill"] for mention in mentions],
-                "unknown_skills": _unknown_terms(content) if priority != "unclassified" else [],
+                "unknown_skills": _unknown_terms(
+                    content, requirement_context=clause_section in {"requirements", "nice_to_have"})
+                    if priority != "unclassified" else [],
                 "minimum_years": years,
             })
     cued_skills = {skill for item in requirements if item["priority"] in {"must_have", "nice_to_have"}

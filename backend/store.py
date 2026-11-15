@@ -11,13 +11,14 @@ PAGE_SIZE = 20
 STATUSES = ("saved", "applied", "screen", "assessment", "interview", "offer", "rejected", "no_reply")
 DEFAULT_SETTINGS = dict(university="", graduation_year=None, cadence="daily", send_time="08:00",
                         timezone="Asia/Kolkata", min_score=60, include_gaps=1, subscriptions_configured=0)
-MATCH_FROM = """FROM scores s JOIN jobs j ON j.id=s.job_id JOIN companies c ON c.id=j.company_id
-    WHERE s.user_id=? AND s.is_stale=0 AND j.is_active=1 AND c.active=1
+MATCH_FROM_BASE = """FROM scores s JOIN jobs j ON j.id=s.job_id JOIN companies c ON c.id=j.company_id
+    WHERE s.user_id=? AND j.is_active=1 AND c.active=1
     AND (NOT EXISTS (SELECT 1 FROM user_settings WHERE user_id=? AND subscriptions_configured=1)
          OR EXISTS (SELECT 1 FROM company_subscriptions WHERE user_id=? AND company_id=c.id))"""
+MATCH_FROM = MATCH_FROM_BASE + " AND s.is_stale=0"
 MATCH_COLUMNS = """j.id job_id,j.title,j.location,j.url,j.first_seen_at,j.raw_json,
     c.id company_id,c.name company_name,s.fit_score,s.reasoning,s.matched_skills,s.missing_requirements,
-    s.evaluation_json,s.deterministic_json"""
+    s.evaluation_json,s.deterministic_json,s.is_stale"""
 
 
 class MultipleProfiles(ValueError):
@@ -144,10 +145,11 @@ def filters(args):
     return result
 
 
-def matches(conn, user_id, selected_filters, now):
+def matches(conn, user_id, selected_filters, now, include_stale=False):
     conn.create_function("location_matches",2,location_matches,deterministic=True)
     params = [user_id] * 3
-    where = MATCH_FROM + " AND s.fit_score>=? AND (?=0 OR c.id=?)"
+    match_from = MATCH_FROM_BASE if include_stale else MATCH_FROM
+    where = match_from + (" AND (s.is_stale=1 OR s.fit_score>=?)" if include_stale else " AND s.fit_score>=?") + " AND (?=0 OR c.id=?)"
     if selected_filters.get('only_mine'):
         where += " AND EXISTS(SELECT 1 FROM company_subscriptions mine WHERE mine.user_id=s.user_id AND mine.company_id=c.id)"
     params.extend((selected_filters["min_score"], selected_filters["company"], selected_filters["company"]))
@@ -164,10 +166,12 @@ def matches(conn, user_id, selected_filters, now):
         where += " AND lower(COALESCE(json_extract(j.raw_json,'$.employmentType'),json_extract(j.raw_json,'$.categories.commitment'),'')) LIKE ?"
         params.append({"internship": "%intern%", "full-time": "%full%", "part-time": "%part%"}[selected_filters["job_type"]])
     count = conn.execute("SELECT COUNT(*) " + where, params).fetchone()[0]
-    order = "s.fit_score DESC,j.id ASC" if selected_filters["sort"] == "best" else "j.first_seen_at DESC,j.id DESC"
+    order = ("s.is_stale ASC,s.fit_score DESC,j.id ASC" if selected_filters["sort"] == "best"
+             else "s.is_stale ASC,j.first_seen_at DESC,j.id DESC")
     if selected_filters.get("company_cards") and not selected_filters["company"]:
         company_count = conn.execute("SELECT COUNT(DISTINCT c.id) " + where, params).fetchone()[0]
-        company_order = "MAX(s.fit_score) DESC,c.id ASC" if selected_filters["sort"] == "best" else "MAX(j.first_seen_at) DESC,c.id ASC"
+        company_order = ("MIN(s.is_stale) ASC,MAX(CASE WHEN s.is_stale=0 THEN s.fit_score END) DESC,c.id ASC"
+                         if selected_filters["sort"] == "best" else "MIN(s.is_stale) ASC,MAX(j.first_seen_at) DESC,c.id ASC")
         company_ids = [row[0] for row in conn.execute(
             "SELECT c.id " + where + " GROUP BY c.id ORDER BY " + company_order + " LIMIT 6 OFFSET ?",
             (*params, (selected_filters["page"] - 1) * 6))]

@@ -35,7 +35,8 @@ def cache_version(resume_text, as_of_date, embedding_revision):
     if type(as_of_date) is not date or not isinstance(embedding_revision, str) or not embedding_revision.strip():
         raise ValueError("Cache version inputs are invalid")
     date_key = as_of_date.isoformat() if extraction.has_current_experience_date(resume_text) else "static"
-    return ":".join((SCORER_VERSION, WEIGHTS_VERSION, "coverage-v8-monotone", extraction.TAXONOMY_VERSION,
+    return ":".join((SCORER_VERSION, WEIGHTS_VERSION, "coverage-v9-boilerplate", extraction.PARSER_VERSION,
+                     extraction.TAXONOMY_VERSION,
                      embedding_revision, date_key))
 
 
