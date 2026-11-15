@@ -9,7 +9,7 @@ from datetime import date
 from backend import matching_extraction as extraction
 
 
-SCORER_VERSION = "deterministic-v4"
+SCORER_VERSION = "deterministic-v5"
 WEIGHTS_VERSION = "weights-v1"
 WEIGHTS = {
     "must_have": 40,
@@ -24,6 +24,9 @@ NEUTRAL_COMPONENT = 0.7
 UNOBSERVED_SKILL_COMPONENT = 0.4
 _DEGREE_LEVEL = {"diploma": 1, "bachelors": 2, "masters": 3, "doctorate": 4}
 _SENIORITY_LEVEL = {"intern": 0, "entry": 1, "mid": 2, "senior": 3, "lead": 4, "management": 5}
+_EDUCATION_REQUIREMENT_CUE = re.compile(
+    r"\b(?:degree|education(?:al)?|bachelor(?:'s)?|master(?:'s)?|ph\.?d\.?|doctorate|"
+    r"diploma|graduate|undergraduate|postgraduate|major|field of study)\b", re.I)
 
 
 def _fraction(value):
@@ -82,7 +85,7 @@ def _coverage(skills, resume_mentions, *, inferred=()):
 
 
 def _education_title_fit(resume_text, jd_text, job_title):
-    jd_education = extraction.extract_education_evidence(jd_text)
+    jd_education = education_requirement_evidence(jd_text)
     resume_education = extraction.extract_education_evidence(resume_text)
     if jd_education:
         education_fit = 1.0 if any(_education_evidence_matches(required, actual)
@@ -101,6 +104,12 @@ def _education_title_fit(resume_text, jd_text, job_title):
     else:
         title_fit = NEUTRAL_COMPONENT
     return _fraction((education_fit + title_fit) / 2)
+
+
+def education_requirement_evidence(text):
+    """Keep education evidence only when the JD explicitly asks about education."""
+    return [item for item in extraction.extract_education_evidence(text)
+            if _EDUCATION_REQUIREMENT_CUE.search(item["text"])]
 
 
 def _education_evidence_matches(required, actual):
@@ -235,9 +244,9 @@ def score(resume_text, jd_text, semantic_similarity, *, job_title="", as_of_date
                                   for skill in item["unknown_skills"]}, key=str.casefold)
     missing = [skill for skill in must_skills + must_unknown_skills if skill not in resume_mentions]
     missing_inferred = [skill for skill in inferred_skills + inferred_unknown_skills if skill not in resume_mentions]
-    jd_education = extraction.extract_education_evidence(jd_text)
+    jd_education = education_requirement_evidence(jd_text)
     resume_education = extraction.extract_education_evidence(resume_text)
-    education_by_clause = {item["text"]: extraction.extract_education_evidence(item["text"])
+    education_by_clause = {item["text"]: education_requirement_evidence(item["text"])
                            for item in requirements}
     education_requirements = [item for item in requirements if item["priority"] == "must_have"
                               and education_by_clause[item["text"]]]

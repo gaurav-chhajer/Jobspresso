@@ -15,7 +15,7 @@ class DeterministicScoringTests(unittest.TestCase):
         self.assertEqual(result["score"], 84)
         self.assertEqual(result["components"]["must_have"], 1.0)
         self.assertEqual(result["matched"][0]["type"], "exact")
-        self.assertEqual(result["scorer_version"], "deterministic-v4")
+        self.assertEqual(result["scorer_version"], "deterministic-v5")
 
     def test_cache_version_changes_daily_only_for_current_experience(self):
         static_resume = "Experience\nPython developer | Jan 2020 - Dec 2022"
@@ -148,6 +148,31 @@ class DeterministicScoringTests(unittest.TestCase):
         result = scoring.score(resume, jd, 0.6, as_of_date=date(2026, 11, 11))
         self.assertEqual({item["type"] for item in result["matched"]}, {"implies", "education"})
         self.assertTrue(all(item["jd_line"] > 0 and item["resume_line"] > 0 for item in result["matched"]))
+
+    def test_education_does_not_match_general_engineering_or_responsibility_text(self):
+        resume = "Education\nB.Tech, Computer Science Engineering"
+        jd = ("Responsibilities\nYou will solve complex engineering challenges.\n"
+              "Software Engineering & Problem Solving\nContribute to engineering excellence through code reviews.\n"
+              "6+ years of professional experience in software engineering.")
+        result = scoring.score(resume, jd, 0.6, as_of_date=date(2026, 11, 11))
+        self.assertNotIn("education", {item["type"] for item in result["matched"]})
+        self.assertEqual(result["components"]["education_title"], scoring.NEUTRAL_COMPONENT)
+
+    def test_saved_evidence_hides_education_match_without_jd_education_requirement(self):
+        import json
+        from backend import store
+
+        result = scoring.score(
+            "Education\nB.Tech, Computer Science Engineering",
+            "Responsibilities\nSoftware Engineering & Problem Solving", 0.6,
+            as_of_date=date(2026, 11, 11))
+        result["matched"].append({
+            "jd": "Software Engineering & Problem Solving",
+            "resume": "B.Tech, Computer Science Engineering",
+            "type": "education",
+        })
+        saved = store._deterministic_breakdown(json.dumps(result))
+        self.assertNotIn("education", {item["type"] for item in saved["matched"]})
 
     def test_fuzzy_skill_matches_require_real_text_and_high_cosine(self):
         result = scoring.score(

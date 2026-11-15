@@ -120,6 +120,9 @@ def _deterministic_breakdown(value):
     for item in result["matched"]:
         if not isinstance(item, dict) or any(not isinstance(item.get(key), str) for key in ("jd", "resume", "type")):
             raise ValueError("Invalid saved deterministic match evidence")
+    from backend.deterministic_scoring import education_requirement_evidence
+    result["matched"] = [item for item in result["matched"] if item["type"] != "education" or
+                         education_requirement_evidence(item["jd"])]
     if not all(isinstance(item, dict) and isinstance(item.get("jd"), str)
                for item in result["missing_must_have_requirements"]):
         raise ValueError("Invalid saved deterministic requirement evidence")
