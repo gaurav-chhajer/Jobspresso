@@ -443,14 +443,14 @@ def discover_roles(client, api_keys, deadline, stop=None):
     """Each charged reservation permits exactly one basic search, with no retries."""
     if isinstance(api_keys, str):
         api_keys = (api_keys,)
-    if (not isinstance(api_keys, (tuple, list)) or not api_keys or
+    if (not isinstance(api_keys, (tuple, list)) or not 1 <= len(api_keys) <= 3 or
             any(not isinstance(key, str) or not key.strip() for key in api_keys)):
         raise ValueError('One or more Tavily API keys are required')
     api_keys = tuple(api_keys)
-    for _ in range(web_discovery.DAILY_SEARCHES):
+    for _ in range(web_discovery.MONTHLY_CREDITS * len(api_keys) // 30):
         if time.monotonic() >= deadline - 45 or stop is not None and stop.is_set():
             return
-        reservation = client.call('discovery/reserve', {})
+        reservation = client.call('discovery/reserve', {'key_count': len(api_keys)})
         search = reservation.get('search')
         if search is None:
             if reservation.get('reason') not in ('budget_exhausted', 'no_ready_role_titles'):
@@ -464,11 +464,17 @@ def discover_roles(client, api_keys, deadline, stop=None):
                 not isinstance(search['title'], str) or not 1 <= len(search['title']) <= role_titles.MAX_TITLE_LENGTH or
                 any(ord(c) < 32 for c in search['title'])):
             raise ValueError('Invalid discovery reservation')
-        key_slot = (search['id'] - 1) % len(api_keys)
+        key_slot = reservation.get('key_slot')
+        if type(key_slot) is not int or not 1 <= key_slot <= len(api_keys):
+            raise ValueError('Invalid reserved Tavily key slot')
+        key_slot -= 1
         postings, rejected, status = [], 0, 'complete'
+        quota_exhausted = False
         try:
             urls = tavily_search.search(search['title'], api_keys[key_slot], domains=[search['domain']], deadline=deadline)
         except (requests.RequestException, ValueError, TypeError) as error:
+            quota_exhausted = (isinstance(error, requests.HTTPError) and error.response is not None
+                               and error.response.status_code in (432, 433))
             logger.error('Web search failed: search_id=%s platform=%s key_slot=%s error=%s; reservation retained, no retry',
                          search['id'], search['platform'], key_slot + 1, type(error).__name__)
             status = 'failed'
@@ -488,12 +494,15 @@ def discover_roles(client, api_keys, deadline, stop=None):
                 logger.warning('Web posting unverified: search_id=%s platform=%s error=%s',
                                search['id'], search['platform'], type(error).__name__)
         # A hosted write failure propagates; uncertain saves are never replayed here.
-        reply = client.call('discovery/results', dict(id=search['id'], status=status, postings=postings, rejected=rejected))
+        outcome = dict(id=search['id'], status=status, postings=postings, rejected=rejected)
+        if quota_exhausted:
+            outcome['quota_exhausted'] = True
+        reply = client.call('discovery/results', outcome)
         if type(reply.get('saved')) is not int or not 0 <= reply['saved'] <= len(postings):
             raise RuntimeError('Discovery results were not acknowledged')
         logger.info('Web discovery checked: search_id=%s platform=%s verified=%s rejected=%s saved=%s',
                     search['id'], search['platform'], len(postings), rejected, reply['saved'])
-        if status == 'failed':
+        if status == 'failed' and not quota_exhausted:
             return  # Provider failure must not consume the rest of the daily budget.
 
 

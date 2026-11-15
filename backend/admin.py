@@ -221,7 +221,8 @@ def register_routes(app, connection, context, now, database, uploads):
             data['groq_limits'] = [dict(slot=row['key_slot'], model=row['model'], at=row['updated_at'],
                 requests=json.loads(row['metrics_json']).get('remaining_requests'),
                 tokens=json.loads(row['metrics_json']).get('remaining_tokens')) for row in limits]
-            section('Tavily budget', ('Day','Daily used / 33','Month','Monthly used / 1000'), 'SELECT day,daily_used,month,monthly_used FROM tavily_budget')
+            section('Tavily aggregate usage', ('Day','Daily used','Month','Monthly used'), 'SELECT day,daily_used,month,monthly_used FROM tavily_budget')
+            section('Tavily per-key monthly budget', ('Key slot','Month','Used / 1000'), 'SELECT key_slot,month,monthly_used FROM tavily_key_budget ORDER BY key_slot')
             section('Discovery outcomes', ('Platform','Status','Searches','Verified','Rejected','Saved'), 'SELECT platform,status,COUNT(*),SUM(verified),SUM(rejected),SUM(saved) FROM tavily_searches GROUP BY platform,status')
             section('Worker heartbeats', ('User ID','Worker','State','Code','Updated'), 'SELECT user_id,worker,state,code,updated_at FROM worker_pulses ORDER BY updated_at DESC')
         elif page == 'audit':

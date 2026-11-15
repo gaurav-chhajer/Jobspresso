@@ -70,9 +70,11 @@ def broad_user(conn, user_id):
         (user_id,)).fetchone()
 
 
-def reserve(conn, now):
+def reserve(conn, now, key_count=1):
     """Caller holds BEGIN IMMEDIATE. Reservations are charged even if work is interrupted."""
     from backend.cloud_worker import fingerprint
+    if type(key_count) is not int or not 1 <= key_count <= 3:
+        raise ValueError('Invalid configured key count')
     if now.tzinfo is None or now.utcoffset() is None:
         raise ValueError('Discovery budget requires an aware clock')
     day = now.astimezone(INDIA).date().isoformat()
@@ -85,7 +87,20 @@ def reserve(conn, now):
         raise ValueError('Discovery clock moved backwards')
     daily = state['daily_used'] if state['day'] == day else 0
     monthly = state['monthly_used'] if state['month'] == month else 0
-    if daily >= DAILY_SEARCHES or monthly >= MONTHLY_CREDITS:
+    if daily >= MONTHLY_CREDITS * key_count // 30 or monthly >= MONTHLY_CREDITS * key_count:
+        return dict(search=None, reason='budget_exhausted', daily_used=daily, monthly_used=monthly)
+    selected_slot = None
+    for slot in range(1, 4):
+        conn.execute('INSERT OR IGNORE INTO tavily_key_budget VALUES(?,?,?)', (slot, month, monthly))
+    for slot in range(1, key_count + 1):
+        budget = conn.execute('SELECT * FROM tavily_key_budget WHERE key_slot=?', (slot,)).fetchone()
+        if month < budget['month']:
+            raise ValueError('Discovery key clock moved backwards')
+        used = budget['monthly_used'] if budget['month'] == month else 0
+        if used < MONTHLY_CREDITS:
+            selected_slot = slot
+            break
+    if selected_slot is None:
         return dict(search=None, reason='budget_exhausted', daily_used=daily, monthly_used=monthly)
     users = conn.execute("""SELECT u.id FROM users u JOIN accounts a ON a.user_id=u.id
         WHERE u.active=1 AND a.email_verified=1 AND trim(u.resume_text)<>''
@@ -103,12 +118,15 @@ def reserve(conn, now):
         identity = fingerprint(dict(user))
         search_id = conn.execute("""INSERT INTO tavily_searches(user_id,fingerprint,title,platform,created_at)
             VALUES(?,?,?,?,?)""", (user['id'], identity, title, platform, now.astimezone(timezone.utc).isoformat())).lastrowid
+        conn.execute('UPDATE tavily_searches SET key_slot=? WHERE id=?', (selected_slot, search_id))
+        conn.execute('UPDATE tavily_key_budget SET month=?,monthly_used=? WHERE key_slot=?',
+                     (month, used + 1, selected_slot))
         conn.execute("""INSERT INTO tavily_cursors(user_id,position) VALUES(?,?)
             ON CONFLICT(user_id) DO UPDATE SET position=excluded.position""", (user['id'], position + 1))
         conn.execute('UPDATE tavily_budget SET day=?,month=?,daily_used=?,monthly_used=?,last_user=? WHERE id=1',
                      (day, month, daily + 1, monthly + 1, user['id']))
         return dict(search=dict(id=search_id, title=title, platform=platform, domain=PLATFORMS[platform]),
-                    daily_used=daily + 1, monthly_used=monthly + 1)
+                    daily_used=daily + 1, monthly_used=monthly + 1, key_slot=selected_slot)
     return dict(search=None, reason='no_ready_role_titles', daily_used=daily, monthly_used=monthly)
 
 
@@ -189,20 +207,24 @@ def register_routes(routes, connection, database):
 
     @routes.post('/discovery/reserve')
     def reserve_search():
-        if body() != {}:
+        data = body()
+        if set(data) - {'key_count'}:
             raise ValueError('Unexpected search reservation fields')
         conn = connection()
         with exclusive_cycle(Path(database).parent / 'pipeline.lock'), conn:
             conn.execute('BEGIN IMMEDIATE')
-            return reserve(conn, datetime.now(timezone.utc))
+            return reserve(conn, datetime.now(timezone.utc), data.get('key_count', 1))
 
     @routes.post('/discovery/results')
     def discovery_results():
         data = body()
-        if set(data) != {'id', 'status', 'postings', 'rejected'}:
+        if set(data) - {'id', 'status', 'postings', 'rejected', 'quota_exhausted'} or not {'id', 'status', 'postings', 'rejected'} <= set(data):
             raise ValueError('Invalid discovery result fields')
         search_id = positive_id(data['id'])
         postings, rejected, status = data['postings'], data['rejected'], data['status']
+        exhausted = data.get('quota_exhausted', False)
+        if type(exhausted) is not bool or exhausted and status != 'failed':
+            raise ValueError('Invalid quota exhaustion report')
         if (status not in ('complete', 'failed') or not isinstance(postings, list) or
                 len(postings) > tavily_search.MAX_RESULTS or type(rejected) is not int or
                 not 0 <= rejected <= tavily_search.MAX_RESULTS or len(postings) + rejected > tavily_search.MAX_RESULTS or
@@ -216,6 +238,12 @@ def register_routes(routes, connection, database):
                 raise ValueError('Unknown search reservation')
             if search['status'] != 'reserved':
                 return dict(saved=search['saved'], already_completed=True)
+            if exhausted:
+                if search['key_slot'] is None:
+                    raise ValueError('Reservation has no key identity')
+                month = datetime.fromisoformat(search['created_at']).astimezone(INDIA).date().isoformat()[:7]
+                conn.execute('UPDATE tavily_key_budget SET monthly_used=MAX(monthly_used,?) WHERE key_slot=? AND month=?',
+                             (MONTHLY_CREDITS, search['key_slot'], month))
             for posting in postings:
                 validate_posting(posting, search['platform'])
             user = broad_user(conn, search['user_id'])

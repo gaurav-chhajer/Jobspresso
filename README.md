@@ -273,10 +273,12 @@ database report does not establish the cause of an empty hosted queue.
 Set `TAVILY_API_KEY`, `TAVILY_API_KEY_2`, and optionally `TAVILY_API_KEY_3` in the
 worker computer's private `.env` to enable Tavily alongside the existing ATS/company
 fetches. Blank slots are skipped; if all are blank, Tavily is disabled. The worker
-rotates configured keys by persistent search reservation ID, so restarts do not
-reset which key is next. A failed request is not retried with another key. The
-existing shared 33/day and 1,000/month search caps still apply across every key and
-account. The existing `scripts.start_hosted_worker` launcher loads this
+selects the first configured key with monthly credit remaining, charging its slot
+in the hosted database before the request. Each key must have an independent
+1,000-credit allowance. Keep configured keys in the same order and do not replace
+them mid-month: accounting belongs to persistent slots, not secret key values.
+Restarts retain usage. Failed requests remain charged and are not replayed.
+The existing `scripts.start_hosted_worker` launcher loads this
 configuration; restart that worker after configuration/code changes. Direct module
 commands use process environment variables.
 
@@ -293,8 +295,17 @@ The [Tavily free plan](https://help.tavily.com/articles/8298987937-billing-credi
 provides 1,000 credits/month; basic searches cost one credit. This worker uses
 basic searches only, with at most ten leads per call and 300 seconds per fetch pass.
 An authenticated hosted reservation commits **before** each provider request.
-The shared limits are `1000 // 30 = 33` searches/day across all accounts and
-**1,000/month**, preventing 31-day overspend. Daily and calendar-month boundaries
+The daily cap is `1000 * configured_key_count // 30`: 33, 66, or 100 searches
+across all accounts. Each key also has a hard 1,000-reservation calendar-month
+cap; exhausted slots are skipped in favor of the next configured key. Tavily
+HTTP 432/433 quota rejections mark that slot exhausted until the next calendar
+month and continue with a new reservation on the next slot. Timeouts, HTTP 429,
+authentication errors and other provider failures stop the pass without replay.
+Migration 036 charges
+historical aggregate monthly usage to each key conservatively because old
+reservations did not identify their key. Deploy the additive migration with the
+existing backup process before restarting updated PC workers. Older workers
+retain the single-key daily cap. Daily and calendar-month boundaries
 use Asia/Kolkata. Reservations count even after a timeout, crash, cancelled run or
 invalid response and are never automatically refunded or retried. Restarting the
 PC does not reset usage. These limits account for this deployment's reservations,

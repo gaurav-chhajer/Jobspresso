@@ -28,6 +28,51 @@ def posting(platform='LinkedIn', employer='Gamma', title='Software Engineer', de
 
 
 class DiscoveryTests(unittest.TestCase):
+    def test_three_keys_allow_one_hundred_daily_and_switch_at_monthly_limit(self):
+        with self.conn:
+            self.conn.execute('BEGIN IMMEDIATE')
+            first = web_discovery.reserve(self.conn, NOW, 3)
+        self.assertEqual(first['key_slot'], 1)
+        self.conn.execute('UPDATE tavily_key_budget SET monthly_used=1000 WHERE key_slot=1')
+        self.conn.commit()
+        with self.conn:
+            self.conn.execute('BEGIN IMMEDIATE')
+            second = web_discovery.reserve(self.conn, NOW, 3)
+        self.assertEqual(second['key_slot'], 2)
+        for _ in range(98):
+            with self.conn:
+                self.conn.execute('BEGIN IMMEDIATE')
+                self.assertIsNotNone(web_discovery.reserve(self.conn, NOW, 3)['search'])
+        with self.conn:
+            self.conn.execute('BEGIN IMMEDIATE')
+            self.assertEqual(web_discovery.reserve(self.conn, NOW, 3)['reason'], 'budget_exhausted')
+        self.assertEqual(self.conn.execute('SELECT daily_used FROM tavily_budget').fetchone()[0], 100)
+        with self.conn:
+            self.conn.execute('BEGIN IMMEDIATE')
+            self.assertEqual(web_discovery.reserve(self.conn, NOW + timedelta(days=1), 3)['key_slot'], 2)
+        self.conn.execute('UPDATE tavily_key_budget SET monthly_used=1000')
+        self.conn.commit()
+        with self.conn:
+            self.conn.execute('BEGIN IMMEDIATE')
+            self.assertIsNone(web_discovery.reserve(self.conn, NOW + timedelta(days=1), 3)['search'])
+        with self.conn:
+            self.conn.execute('BEGIN IMMEDIATE')
+            self.assertEqual(web_discovery.reserve(self.conn, NOW + timedelta(days=31), 3)['key_slot'], 1)
+
+    def test_invalid_key_counts_do_not_reserve_credits(self):
+        for count in (0, 4, True, '3', None):
+            with self.subTest(count=count):
+                self.assertEqual(self.call('discovery/reserve', {'key_count': count}).status_code, 400)
+        self.assertEqual(self.conn.execute('SELECT COUNT(*) FROM tavily_searches').fetchone()[0], 0)
+
+    def test_provider_quota_exhaustion_persists_and_selects_next_key(self):
+        reserved = self.call('discovery/reserve', {'key_count': 3}).json
+        response = self.call('discovery/results', dict(id=reserved['search']['id'], status='failed',
+                             postings=[], rejected=0, quota_exhausted=True))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.call('discovery/reserve', {'key_count': 3}).json['key_slot'], 2)
+
+
     def setUp(self):
         test_cloud_worker.CloudEndpointTests.setUp(self)
         clock = patch.object(web_discovery, 'datetime', wraps=datetime)
@@ -243,7 +288,7 @@ class VerificationTests(unittest.TestCase):
 
 class WorkerSearchTests(unittest.TestCase):
     def reservation(self):
-        return dict(search=dict(id=1, title='Software Engineer', platform='LinkedIn', domain='linkedin.com'))
+        return dict(search=dict(id=1, title='Software Engineer', platform='LinkedIn', domain='linkedin.com'), key_slot=1)
 
     def test_search_body_contains_only_role_query_and_platform_filter(self):
         client = MagicMock()
@@ -258,12 +303,12 @@ class WorkerSearchTests(unittest.TestCase):
                                       auto_parameters=False, include_domains=['linkedin.com']))
         self.assertEqual(post.call_count, 1)
 
-    def test_configured_tavily_keys_rotate_by_persistent_reservation_id(self):
+    def test_configured_tavily_keys_follow_persistent_reserved_slot(self):
         client = MagicMock()
         reservations = iter([
-            dict(search=dict(id=1, title='Software Engineer', platform='LinkedIn', domain='linkedin.com')),
-            dict(search=dict(id=2, title='Backend Engineer', platform='Indeed', domain='indeed.com')),
-            dict(search=dict(id=3, title='Data Engineer', platform='Wellfound', domain='wellfound.com')),
+            dict(search=dict(id=1, title='Software Engineer', platform='LinkedIn', domain='linkedin.com'), key_slot=1),
+            dict(search=dict(id=2, title='Backend Engineer', platform='Indeed', domain='indeed.com'), key_slot=1),
+            dict(search=dict(id=3, title='Data Engineer', platform='Wellfound', domain='wellfound.com'), key_slot=2),
             dict(search=None, reason='budget_exhausted'),
         ])
         client.call.side_effect = lambda route, payload: (
@@ -271,7 +316,7 @@ class WorkerSearchTests(unittest.TestCase):
         with patch.object(tavily_search, 'search', return_value=[]) as search:
             runner.discover_roles(client, ('key-one', 'key-two'), runner.time.monotonic() + 100)
         self.assertEqual([call.args[1] for call in search.call_args_list],
-                         ['key-one', 'key-two', 'key-one'])
+                         ['key-one', 'key-one', 'key-two'])
 
     def test_provider_timeout_is_recorded_once_without_retry_or_remaining_budget_burn(self):
         client = MagicMock()
@@ -281,6 +326,18 @@ class WorkerSearchTests(unittest.TestCase):
         search.assert_called_once()
         self.assertEqual(client.call.call_args.args[1]['status'], 'failed')
         self.assertEqual(client.call.call_count, 2)
+
+    def test_provider_plan_limit_reports_exhaustion_and_requests_next_slot(self):
+        client = MagicMock()
+        second = dict(self.reservation(), key_slot=2)
+        client.call.side_effect = [self.reservation(), dict(saved=0), second, dict(saved=0),
+                                  dict(search=None, reason='budget_exhausted')]
+        response = requests.Response()
+        response.status_code = 432
+        with patch.object(tavily_search, 'search', side_effect=[requests.HTTPError(response=response), []]) as search:
+            runner.discover_roles(client, ('key-one', 'key-two'), runner.time.monotonic()+100)
+        self.assertEqual([call.args[1] for call in search.call_args_list], ['key-one', 'key-two'])
+        self.assertTrue(client.call.call_args_list[1].args[1]['quota_exhausted'])
 
     def test_unverified_postings_are_counted_and_uncertain_hosted_writes_propagate(self):
         client = MagicMock()
