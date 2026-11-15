@@ -334,10 +334,12 @@ class WorkerSearchTests(unittest.TestCase):
                                   dict(search=None, reason='budget_exhausted')]
         response = requests.Response()
         response.status_code = 432
-        with patch.object(tavily_search, 'search', side_effect=[requests.HTTPError(response=response), []]) as search:
+        with patch.object(tavily_search, 'search', side_effect=[requests.HTTPError(response=response), []]) as search, self.assertLogs(runner.logger, level='ERROR') as logs:
             runner.discover_roles(client, ('key-one', 'key-two'), runner.time.monotonic()+100)
         self.assertEqual([call.args[1] for call in search.call_args_list], ['key-one', 'key-two'])
         self.assertTrue(client.call.call_args_list[1].args[1]['quota_exhausted'])
+        self.assertIn('http_status=432 quota_exhausted=True', '\n'.join(logs.output))
+        self.assertNotIn('key-one', '\n'.join(logs.output))
 
     def test_unverified_postings_are_counted_and_uncertain_hosted_writes_propagate(self):
         client = MagicMock()

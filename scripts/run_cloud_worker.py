@@ -475,8 +475,10 @@ def discover_roles(client, api_keys, deadline, stop=None):
         except (requests.RequestException, ValueError, TypeError) as error:
             quota_exhausted = (isinstance(error, requests.HTTPError) and error.response is not None
                                and error.response.status_code in (432, 433))
-            logger.error('Web search failed: search_id=%s platform=%s key_slot=%s error=%s; reservation retained, no retry',
-                         search['id'], search['platform'], key_slot + 1, type(error).__name__)
+            http_status = (error.response.status_code if isinstance(error, requests.HTTPError)
+                           and error.response is not None else 'unavailable')
+            logger.error('Web search failed: search_id=%s platform=%s key_slot=%s error=%s http_status=%s quota_exhausted=%s; reservation retained, no retry',
+                         search['id'], search['platform'], key_slot + 1, type(error).__name__, http_status, quota_exhausted)
             status = 'failed'
             urls = []
         for url in urls:
