@@ -26,7 +26,7 @@ TAXONOMY_VERSION = _TAXONOMY["taxonomy_version"]
 IMPLIES = {source: tuple(targets) for source, targets in _TAXONOMY["implies"].items()}
 BLOCKED_SKILL_PAIRS = frozenset(frozenset(pair) for pair in _TAXONOMY["blocked_pairs"])
 FUZZY_SKILL_THRESHOLD = 0.92
-PARSER_VERSION = "jd-requirements-v3"
+PARSER_VERSION = "jd-requirements-v4"
 
 
 _SECTION_NAMES = {
@@ -39,6 +39,7 @@ _SECTION_NAMES = {
     "projects": ("projects", "personal projects", "academic projects", "selected projects"),
     "education": ("education", "academic background", "qualifications"),
     "requirements": ("requirements", "qualifications", "key requirements", "required skills", "who you are",
+                     "what sets you apart",
                      "minimum qualifications", "basic qualifications", "must have", "must haves", "what you will need", "what you'll need",
                      "what we are looking for", "what we're looking for", "required qualifications"),
     "non_requirements": ("benefits", "benefits & perks", "benefits and perks", "perks", "compensation",
@@ -180,7 +181,11 @@ _UNKNOWN_SKILL_CONTEXT = re.compile(
 _URL_PATTERN = re.compile(r"\b(?:https?://|www\.)\S+", re.I)
 _JD_BOILERPLATE = re.compile(
     r"\b(?:sms opt[- ]in|phone numbers? .*\b(?:third parties|affiliates)|"
-    r"not shared,? sold,? or rented|data privacy notice|equal opportunity employer)\b", re.I)
+    r"not shared,? sold,? or rented|data privacy notice|equal opportunity employer|"
+    r"duties and responsibilities of this position may evolve|"
+    r"by submitting your application, you consent to .* background checks|"
+    r"takes your privacy seriously|in accordance with applicable data protection laws|"
+    r"for any inquiries related to data privacy|explore more opportunities at\s*:?)\b", re.I)
 _BUSINESS_SKILL_CONTEXT = {
     "Sales": re.compile(r"\b(?:sales (?:strategy|pipeline|operations|process|experience|targets?)|selling)\b", re.I),
     "Marketing": re.compile(r"\b(?:marketing (?:campaigns?|strategy|operations|experience)|digital marketing|content marketing|seo)\b", re.I),

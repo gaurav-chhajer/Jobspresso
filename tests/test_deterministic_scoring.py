@@ -44,6 +44,12 @@ class DeterministicScoringTests(unittest.TestCase):
         self.assertEqual(result["missing_must_have"], [])
         self.assertEqual(result["components"]["must_have"], 0.4)
 
+    def test_helm_requirement_matches_resume_evidence(self):
+        result = scoring.score("Skills\nHelm charts", "WHAT SETS YOU APART\nHelm.", 0.5,
+                               as_of_date=date(2026, 11, 13))
+        self.assertEqual(result["missing_must_have"], [])
+        self.assertEqual(result["matched"][0]["skill"], "Helm")
+
     def test_related_tools_are_not_unconditional_skill_aliases(self):
         mentions = scoring.extraction.extract_skill_mentions("Skills\nGitHub, Jenkins pipelines")
         self.assertNotIn("Git", {item["skill"] for item in mentions})

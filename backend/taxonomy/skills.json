@@ -1,5 +1,5 @@
 {
-  "taxonomy_version": "skills-v3-esco-1.2.0",
+  "taxonomy_version": "skills-v4-esco-1.2.0",
   "source": "Curated Jobspresso taxonomy with selected exact English alternate labels adapted from ESCO v1.2.0",
   "skills": {
     "Python": [
@@ -93,6 +93,10 @@
     "Kubernetes": [
       "kubernetes",
       "k8s"
+    ],
+    "Helm": [
+      "helm",
+      "helm charts"
     ],
     "AWS": [
       "aws",

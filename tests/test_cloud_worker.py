@@ -7,7 +7,8 @@ from unittest.mock import MagicMock, patch
 
 import requests
 
-from backend import automatic_matching, cloud_worker, local_embeddings, pipeline_skeleton as pipeline, role_titles
+from backend import (automatic_matching, cloud_worker, deterministic_scoring, groq_requirement_assessor,
+                     local_embeddings, pipeline_skeleton as pipeline, role_titles)
 from backend.app import create_app
 from scripts import run_cloud_worker as runner
 from scripts import watch_hosted_jobs as watcher
@@ -238,7 +239,8 @@ class CloudEndpointTests(unittest.TestCase):
         scorer = type("Scorer", (), {"conn": self.conn})()
         with patch("backend.career_sources.prepare_job", side_effect=lambda value: dict(value)), \
                 patch("backend.semantic_similarity.section_similarity", return_value=0.72), \
-                patch("backend.semantic_similarity.fuzzy_skill_matches", return_value=[]):
+                patch("backend.semantic_similarity.fuzzy_skill_matches", return_value=[]), \
+                patch("backend.groq_requirement_assessor.assess", return_value={}):
             result = pipeline.score_job_deterministic(item["user"], item["job"], item["company_name"], scorer)
         response = self.call("score", dict(user_id=1, job_id=item["job"]["id"],
                                             fingerprint=item["fingerprint"], result=result))
@@ -247,6 +249,52 @@ class CloudEndpointTests(unittest.TestCase):
                                   (item["job"]["id"],)).fetchone()
         self.assertIsNone(saved["evaluation_json"])
         self.assertEqual(json.loads(saved["deterministic_json"])["score"], saved["fit_score"])
+
+    def test_groq_requirement_assessment_uses_only_primary_and_secondary_keys(self):
+        first = MagicMock()
+        first.status_code = 401
+        first.raise_for_status.side_effect = requests.HTTPError("unauthorized")
+        second = MagicMock()
+        second.status_code = 200
+        second.json.return_value = {"choices": [{"message": {"content":
+            '{"requirements":[{"id":0,"skill_terms":["identity platform development"]}]}'} }]}
+        requirements = [{"text": "Experience building identity platforms", "priority": "must_have",
+                         "skills": [], "unknown_skills": [], "minimum_years": None}]
+        with patch.dict(os.environ, {"GROQ_API_KEY_2": "secondary", "GROQ_API_KEY_3": "never-use"}), \
+                patch.object(groq_requirement_assessor.requests, "post", side_effect=[first, second]) as post:
+            result = groq_requirement_assessor.assess(requirements, primary_key="primary")
+        self.assertEqual(result, {requirements[0]["text"]: ["identity platform development"]})
+        self.assertEqual(post.call_count, 2)
+        self.assertEqual(post.call_args_list[0].kwargs["headers"]["Authorization"], "Bearer primary")
+        self.assertEqual(post.call_args_list[1].kwargs["headers"]["Authorization"], "Bearer secondary")
+        self.assertTrue(first.close.called)
+        self.assertTrue(second.close.called)
+
+    def test_groq_assisted_terms_are_validated_then_used_by_local_scoring(self):
+        with self.assertRaises(ValueError):
+            deterministic_scoring.score(
+                "Skills\nPython", "Requirements\nPython required", 0.5,
+                as_of_date=datetime(2026, 11, 13, tzinfo=timezone.utc).date(),
+                requirement_assessments={"Python required": ["Python"]})
+        result = deterministic_scoring.score(
+            "Experience\nIdentity platform development",
+            "Requirements\nExperience building Login-as-a-Service platforms", 0.5,
+            as_of_date=datetime(2026, 11, 13, tzinfo=timezone.utc).date(),
+            requirement_assessments={
+                "Experience building Login-as-a-Service platforms": ["identity platform development"]})
+        self.assertEqual(result["requirement_coverage"]["recognized"], 1)
+        self.assertEqual(result["requirement_coverage"]["needs_review"], [])
+        self.assertEqual(result["missing_must_have"], [])
+
+    def test_groq_assessor_rejects_unknown_clause_ids_and_bad_terms(self):
+        for content in (
+            '{"requirements":[{"id":1,"skill_terms":["skill"]}]}',
+            '{"requirements":[{"id":0,"skill_terms":[""]}]}',
+            '{"requirements":[{"id":0,"skill_terms":["skill"],"priority":"must_have"}]}',
+        ):
+            with self.subTest(content=content), self.assertRaises(ValueError):
+                groq_requirement_assessor._parse_response(
+                    {"choices": [{"message": {"content": content}}]}, [0])
 
     def test_successful_companies_filter_before_candidate_limit(self):
         original = self.conn.execute('SELECT * FROM jobs WHERE id=1').fetchone()
@@ -494,6 +542,7 @@ class CloudEndpointTests(unittest.TestCase):
                          url=row["url"], raw_json=json.loads(row["raw_json"]))]
         with patch.object(local_embeddings, "LocalScorer", return_value=LocalScorer()), \
                 patch.object(pipeline, "GROQ_API_KEY", ""), \
+                patch.dict(os.environ, GROQ_API_KEY_2=""), \
                 patch.object(pipeline, "fetch_jobs_for_company", side_effect=fetched), \
                 patch("backend.career_sources.prepare_job", side_effect=lambda value, *args: dict(value)), \
                 patch("backend.semantic_similarity.section_similarity", return_value=0.72), \

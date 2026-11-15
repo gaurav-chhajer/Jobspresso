@@ -38,7 +38,7 @@ def cache_version(resume_text, as_of_date, embedding_revision):
     if type(as_of_date) is not date or not isinstance(embedding_revision, str) or not embedding_revision.strip():
         raise ValueError("Cache version inputs are invalid")
     date_key = as_of_date.isoformat() if extraction.has_current_experience_date(resume_text) else "static"
-    return ":".join((SCORER_VERSION, WEIGHTS_VERSION, "coverage-v9-boilerplate", extraction.PARSER_VERSION,
+    return ":".join((SCORER_VERSION, WEIGHTS_VERSION, "coverage-v10-groq-assist", extraction.PARSER_VERSION,
                      extraction.TAXONOMY_VERSION,
                      embedding_revision, date_key))
 
@@ -150,7 +150,8 @@ def pending_fuzzy_matches(resume_text, jd_text, pairs):
         and extraction.FUZZY_SKILL_THRESHOLD <= pair["cosine"] <= 1)]
 
 
-def score(resume_text, jd_text, semantic_similarity, *, job_title="", as_of_date, fuzzy_skill_pairs=()):
+def score(resume_text, jd_text, semantic_similarity, *, job_title="", as_of_date, fuzzy_skill_pairs=(),
+          requirement_assessments=None):
     """Calculate a versioned score from bounded text and a local cosine value."""
     for label, value in (("resume", resume_text), ("job description", jd_text)):
         if not isinstance(value, str) or not value.strip() or len(value) > 250000 or "\x00" in value:
@@ -166,6 +167,26 @@ def score(resume_text, jd_text, semantic_similarity, *, job_title="", as_of_date
 
     jd_mentions = extraction.extract_skill_mentions(jd_text, all_mentions=True)
     requirements = extraction.extract_jd_requirements(jd_text, job_title=job_title)
+    groq_assessed_clauses = set()
+    if requirement_assessments is not None:
+        if not isinstance(requirement_assessments, dict):
+            raise ValueError("Requirement assessments must be a mapping")
+        by_text = {item["text"]: item for item in requirements}
+        for clause, terms in requirement_assessments.items():
+            if (not isinstance(clause, str) or clause not in by_text or not isinstance(terms, list) or
+                    len(terms) > 5 or any(not isinstance(term, str) or not term.strip() or len(term) > 80
+                                           for term in terms)):
+                raise ValueError("Invalid requirement assessment")
+            item = by_text[clause]
+            if (item["skills"] or item["minimum_years"] is not None or
+                    education_requirement_evidence(item["text"]) or not terms):
+                raise ValueError("Requirement assessment does not target an unassessed clause")
+            known_terms = {mention["skill"] for term in terms
+                           for mention in extraction.extract_skill_mentions(term, section_context="requirements")}
+            item["skills"] = sorted(known_terms)
+            item["unknown_skills"] = sorted((set(item["unknown_skills"]) | (set(terms) - known_terms)) - known_terms,
+                                             key=str.casefold)
+            groq_assessed_clauses.add(clause)
     resume_mentions = _resume_evidence(resume_text, requirements)
     # Resolve explicit adjacent alternatives to one criterion; conjunctions remain separate.
     for item in requirements:
@@ -345,6 +366,7 @@ def score(resume_text, jd_text, semantic_similarity, *, job_title="", as_of_date
         missing_requirements.append({"jd": job_title, "jd_line": 0, "reason": "seniority"})
     assessed = [item for item in requirements if item["priority"] in {"must_have", "nice_to_have", "inferred_must_have"}]
     recognized = [item for item in assessed if item["skills"] or item["minimum_years"] is not None
+                  or item["text"] in groq_assessed_clauses
                   or education_by_clause.get(item["text"])]
     recognized_texts = {item["text"] for item in recognized}
     return {

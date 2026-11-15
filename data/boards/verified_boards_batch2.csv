@@ -14,3 +14,33 @@ Spotify,lever,spotify,79,https://api.lever.co/v0/postings/spotify?mode=json
 Figma,greenhouse,figma,139,https://boards-api.greenhouse.io/v1/boards/figma/jobs
 Asana,greenhouse,asana,105,https://boards-api.greenhouse.io/v1/boards/asana/jobs
 Dropbox,greenhouse,dropbox,23,https://boards-api.greenhouse.io/v1/boards/dropbox/jobs
+Mercor,ashby,mercor,,https://api.ashbyhq.com/posting-api/job-board/mercor
+Mirendil,ashby,mirendil,16,https://api.ashbyhq.com/posting-api/job-board/mirendil
+Mavria,ashby,mavria,14,https://api.ashbyhq.com/posting-api/job-board/mavria
+Rox,ashby,Rox-Data-Corp,40,https://api.ashbyhq.com/posting-api/job-board/Rox-Data-Corp
+Daylight Security,greenhouse,daylightsecurity,34,https://boards-api.greenhouse.io/v1/boards/daylightsecurity/jobs
+Coframe,ashby,coframe,17,https://api.ashbyhq.com/posting-api/job-board/coframe
+Pliant,ashby,pliant,36,https://api.ashbyhq.com/posting-api/job-board/pliant
+Traversal,ashby,traversal,31,https://api.ashbyhq.com/posting-api/job-board/traversal
+Northwood Space,ashby,NorthwoodSpace,64,https://api.ashbyhq.com/posting-api/job-board/NorthwoodSpace
+Serval,ashby,serval,68,https://api.ashbyhq.com/posting-api/job-board/serval
+Wabi,ashby,wabi,0,https://api.ashbyhq.com/posting-api/job-board/wabi
+Infisical,ashby,infisical,12,https://api.ashbyhq.com/posting-api/job-board/infisical
+Hyperbolic,ashby,hyperbolic,20,https://api.ashbyhq.com/posting-api/job-board/hyperbolic
+Hex,ashby,hex,40,https://api.ashbyhq.com/posting-api/job-board/hex
+General Compute,ashby,generalcompute,7,https://api.ashbyhq.com/posting-api/job-board/generalcompute
+Whop,ashby,whop,39,https://api.ashbyhq.com/posting-api/job-board/whop
+Legora,ashby,legora,341,https://api.ashbyhq.com/posting-api/job-board/legora
+Blacksmith,ashby,Blacksmith,18,https://api.ashbyhq.com/posting-api/job-board/Blacksmith
+Helicon,ashby,helicon,4,https://api.ashbyhq.com/posting-api/job-board/helicon
+Town,ashby,town,17,https://api.ashbyhq.com/posting-api/job-board/town
+Greptile,ashby,greptile,16,https://api.ashbyhq.com/posting-api/job-board/greptile
+Modal,ashby,modal,43,https://api.ashbyhq.com/posting-api/job-board/modal
+Causa Prima,ashby,causaprima,11,https://api.ashbyhq.com/posting-api/job-board/causaprima
+Mecka,ashby,mecka.ai,55,https://api.ashbyhq.com/posting-api/job-board/mecka.ai
+Vesta,ashby,vesta,12,https://api.ashbyhq.com/posting-api/job-board/vesta
+Preference Model,ashby,Preference-Model,6,https://api.ashbyhq.com/posting-api/job-board/Preference-Model
+Siena AI,ashby,siena,7,https://api.ashbyhq.com/posting-api/job-board/siena
+Melius,ashby,melius,5,https://api.ashbyhq.com/posting-api/job-board/melius
+Namespace,ashby,namespace,14,https://api.ashbyhq.com/posting-api/job-board/namespace
+Armadin,ashby,armadin,25,https://api.ashbyhq.com/posting-api/job-board/armadin

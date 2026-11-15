@@ -86,6 +86,19 @@ class CompanySeedTests(unittest.TestCase):
                              [('Arcesium', 'greenhouse', 'arcesiumllc', 1)])
             self.assertEqual(conn.execute("SELECT name,ats_type,board_slug,active FROM companies WHERE board_slug='apolloio'").fetchall(),
                              [('Apollo.io', 'greenhouse', 'apolloio', 1)])
+            fetched_companies = {
+                name: (ats_type, board_slug, active)
+                for name, ats_type, board_slug, active in conn.execute(
+                    "SELECT name,ats_type,board_slug,active FROM companies WHERE name IN ("
+                    "'Mercor','Mirendil','Mavria','Rox','Daylight Security','Coframe','Pliant','Traversal',"
+                    "'Northwood Space','Serval','Wabi','Infisical','Hyperbolic','Hex','General Compute',"
+                    "'Whop','Legora','Blacksmith','Helicon','Town','Greptile','Modal','Causa Prima',"
+                    "'Mecka','Vesta','Preference Model','Siena AI','Melius','Namespace','Armadin')")
+            }
+            self.assertEqual(len(fetched_companies), 30)
+            self.assertTrue(all(active == 1 for _, _, active in fetched_companies.values()))
+            self.assertEqual(fetched_companies['Daylight Security'][:2], ('greenhouse', 'daylightsecurity'))
+            self.assertEqual(fetched_companies['Wabi'][:2], ('ashby', 'wabi'))
             self.assertEqual(set(row[0] for row in conn.execute('SELECT career_source FROM companies WHERE career_source IS NOT NULL')), set(SOURCES))
             self.assertEqual(conn.execute("SELECT name,active FROM companies WHERE career_source IN ('icici','futuresfirst') ORDER BY name").fetchall(),
                              [('Futures First', 0), ('ICICI Bank', 0)])

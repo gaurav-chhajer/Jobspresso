@@ -775,16 +775,22 @@ def score_job_deterministic(user_row, job_row, company_name, scorer):
         if requirements is None:
             requirements = deterministic_scoring.extraction.extract_jd_requirements(description)
             deterministic_store.put_jd_requirements(conn, parsed_jd_hash, requirements)
+        from backend import groq_requirement_assessor
+        requirement_assessments = groq_requirement_assessor.assess(requirements, primary_key=GROQ_API_KEY)
+        assisted_terms = sorted({term for terms in requirement_assessments.values() for term in terms},
+                                key=str.casefold)
         semantic = semantic_similarity.section_similarity(
             resume_text, description, scorer, resume_owner=resume_hash, jd_owner=jd_hash)
         resume_mentions = deterministic_scoring.extraction.extract_skill_mentions(resume_text)
         jd_mentions = deterministic_scoring.extraction.extract_skill_mentions(description)
         fuzzy_pairs = semantic_similarity.fuzzy_skill_matches(resume_mentions, jd_mentions, scorer)
         fuzzy_pairs.extend(semantic_similarity.fuzzy_unknown_skill_matches(
-            resume_text, description, scorer, resume_owner="resume:" + resume_hash, jd_owner="jd:" + jd_hash))
+            resume_text, description + ("\nRequirements\n" + "\n".join(assisted_terms) if assisted_terms else ""),
+            scorer, resume_owner="resume:" + resume_hash, jd_owner="jd:" + jd_hash))
         fuzzy_pairs = deterministic_scoring.pending_fuzzy_matches(resume_text, description, fuzzy_pairs)
         cached = deterministic_scoring.score(resume_text, description, semantic, job_title=job["title"],
-                                             as_of_date=as_of, fuzzy_skill_pairs=fuzzy_pairs)
+                                             as_of_date=as_of, fuzzy_skill_pairs=fuzzy_pairs,
+                                             requirement_assessments=requirement_assessments)
         cached["explanation"] = _deterministic_explanation(cached)
         deterministic_store.note_unmatched(
             conn, deterministic_scoring.extraction.unknown_skill_candidates(description))

@@ -88,6 +88,31 @@ class MatchingExtractionTests(unittest.TestCase):
         self.assertTrue({"Code", "Context", "Hands", "How", "Jobgether", "Protocol",
                          "Relations", "Storage", "Why"}.isdisjoint(unknown))
 
+    def test_what_sets_you_apart_requirements_exclude_xsolla_legal_and_footer_text(self):
+        text = ("WHAT SETS YOU APART\n"
+                "Helm.\n"
+                "Experience building scalable, secure Login-as-a-Service platforms.\n"
+                "Strong grasp of social login, SSO, and federated identity.\n"
+                "Designed multi-tenant identity systems with isolation and configurability.\n"
+                "Delivered developer-friendly APIs, SDKs, and integration documentation.\n"
+                "Strong English communicator, for both technical and non-technical topics.\n"
+                "The duties and responsibilities of this position may evolve over time to support the organization’s goals and individual growth.\n"
+                "By submitting your application, you consent to Xsolla conducting background checks, where permitted by law, after the final interview stage.\n"
+                "Xsolla takes your privacy seriously and will not sell or externally distribute any personal data received during the hiring process.\n"
+                "In accordance with applicable data protection laws, Xsolla is committed to protecting your personal information and respecting your privacy.\n"
+                "For any inquiries related to data privacy, please contact: careers@xsolla.com\n"
+                "Explore more opportunities at: https://xsolla.com/careers")
+        sections = extraction.split_sections(text)
+        self.assertEqual(sections[0]["name"], "requirements")
+        requirements = extraction.extract_jd_requirements(text)
+        self.assertTrue(any("Helm" in item["text"] for item in requirements))
+        self.assertTrue(any("Helm" in item["skills"] for item in requirements))
+        self.assertFalse(any("privacy" in item["text"].casefold() or
+                             "background checks" in item["text"].casefold() or
+                             "duties and responsibilities" in item["text"].casefold() or
+                             "explore more opportunities" in item["text"].casefold()
+                             for item in requirements))
+
     def test_generic_application_language_does_not_make_domain_acronyms_technical_skills(self):
         text = "Requirements\nApply knowledge of PD, EAD, and LGD models to evaluate credit risk required"
         requirement, = extraction.extract_jd_requirements(text)
@@ -126,7 +151,7 @@ class MatchingExtractionTests(unittest.TestCase):
         })
 
     def test_versioned_android_taxonomy_and_framework_implications(self):
-        self.assertEqual(extraction.TAXONOMY_VERSION, "skills-v3-esco-1.2.0")
+        self.assertEqual(extraction.TAXONOMY_VERSION, "skills-v4-esco-1.2.0")
         mentions = extraction.expand_implied_skills(
             extraction.extract_skill_mentions("Skills\nJetpack Compose, Coroutines, Hilt, Retrofit, Room, "
                                               "Firebase, Kafka, GraphQL, Terraform"))
@@ -136,6 +161,11 @@ class MatchingExtractionTests(unittest.TestCase):
         self.assertEqual({item["skill"] for item in extraction.expand_implied_skills(
             extraction.extract_skill_mentions("Requirements\nFlask and Pandas required"))},
             {"Flask", "Pandas", "Python"})
+
+    def test_helm_is_a_recognized_requirement_and_resume_skill(self):
+        result = extraction.extract_jd_requirements("WHAT SETS YOU APART\nHelm.")
+        self.assertEqual(result[0]["skills"], ["Helm"])
+        self.assertEqual(result[0]["unknown_skills"], [])
 
     def test_esco_aliases_are_limited_to_reviewed_exact_english_alternates(self):
         mentions = extraction.extract_skill_mentions(

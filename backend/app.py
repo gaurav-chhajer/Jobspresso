@@ -12,7 +12,7 @@ from flask import Flask, flash, g, jsonify, redirect, render_template, request, 
 from werkzeug.utils import secure_filename
 
 from backend import accounts, admin, automatic_matching, cloud_worker, email_unsubscribe, feedback, google_accounts, groq_limits, hosting, matching_tasks, resumes, scoring_feedback, store, tracker_analytics, workflow_monitor
-from backend.pipeline_skeleton import extract_job_description, get_unsent_top_matches
+from backend.pipeline_skeleton import GROQ_API_KEY, extract_job_description, get_unsent_top_matches
 
 ROOT = Path(__file__).resolve().parents[1]
 NAVIGATION = (("dashboard", "Dashboard"), ("jobs", "Job matches"),
@@ -155,6 +155,11 @@ def create_app(database_path=None, upload_dir=None):
                 if requirements is None:
                     requirements = deterministic_scoring.extraction.extract_jd_requirements(jd_text)
                     deterministic_store.put_jd_requirements(cache_conn, parsed_jd_hash, requirements)
+                from backend import groq_requirement_assessor
+                requirement_assessments = groq_requirement_assessor.assess(
+                    requirements, primary_key=GROQ_API_KEY)
+                assisted_terms = sorted({term for terms in requirement_assessments.values() for term in terms},
+                                        key=str.casefold)
                 try:
                     scorer = local_embeddings.LocalScorer(cache_path=local_embeddings.CACHE_PATH)
                 except (RuntimeError, ImportError) as error:
@@ -168,13 +173,15 @@ def create_app(database_path=None, upload_dir=None):
                     fuzzy_pairs = semantic_similarity.fuzzy_skill_matches(
                         resume_mentions, jd_mentions, scorer)
                     fuzzy_pairs.extend(semantic_similarity.fuzzy_unknown_skill_matches(
-                        resume_text, jd_text, scorer, resume_owner="resume:" + resume_hash,
+                        resume_text, jd_text + ("\nRequirements\n" + "\n".join(assisted_terms)
+                                                if assisted_terms else ""),
+                        scorer, resume_owner="resume:" + resume_hash,
                         jd_owner="jd:" + jd_hash))
                 finally:
                     scorer.close()
                 cached = deterministic_scoring.score(
                     resume_text, jd_text, semantic, job_title=title, as_of_date=as_of,
-                    fuzzy_skill_pairs=fuzzy_pairs)
+                    fuzzy_skill_pairs=fuzzy_pairs, requirement_assessments=requirement_assessments)
                 cached["explanation"] = deterministic_scoring.template_explanation(cached)
                 deterministic_store.note_unmatched(
                     cache_conn, deterministic_scoring.extraction.unknown_skill_candidates(jd_text))

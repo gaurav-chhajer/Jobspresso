@@ -248,20 +248,21 @@ class WebFlowTests(unittest.TestCase):
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], before)
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0], 35)
 
-    def test_deterministic_breakdown_is_saved_and_shown_with_evidence(self):
+    def test_deterministic_breakdown_is_saved_without_evidence_section(self):
         self.seed_user()
         scorer = type("Scorer", (), {"conn": self.conn})()
         job = self.conn.execute("SELECT * FROM jobs WHERE id=1").fetchone()
         user = dict(self.conn.execute("SELECT * FROM users WHERE id=1").fetchone())
         with patch("backend.career_sources.prepare_job", side_effect=lambda value: dict(value)), \
                 patch("backend.semantic_similarity.section_similarity", return_value=0.72), \
-                patch("backend.semantic_similarity.fuzzy_skill_matches", return_value=[]):
+                patch("backend.semantic_similarity.fuzzy_skill_matches", return_value=[]), \
+                patch("backend.groq_requirement_assessor.assess", return_value={}):
             result = pipeline_skeleton.score_job_deterministic(user, dict(job), "Alpha", scorer)
         pipeline_skeleton.store_score(self.conn, 1, 1, result)
         response = self.client.get("/jobs?job=1")
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Alignment estimate", response.data)
-        self.assertIn(b"Evidence found", response.data)
+        self.assertNotIn(b"<summary>Evidence found</summary>", response.data)
         self.assertIn(b"not interview odds", response.data)
         self.assertIn(b"Python", response.data)
 
