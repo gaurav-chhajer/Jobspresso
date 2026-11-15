@@ -464,14 +464,17 @@ def register_routes(application, connection, database):
 
     @routes.post("/job-unavailable")
     def job_unavailable():
-        """Retain history while retiring a worker-verified absent PwC posting.
+        """Retain history while retiring a worker-verified unavailable posting.
 
-        The worker must first receive a detail 403 and an empty official search
-        for that requisition. A generic network failure is never evidence.
+        Workday 403s require an empty exact official search. HTTP 410 is a
+        definitive detail response from the verified official source. A generic
+        network failure or other denial is never evidence.
         """
         data = body()
         user_id, job_id = positive_id(data.get('user_id')), positive_id(data.get('job_id'))
-        if data.get('reason') != 'pwc_detail_403_search_empty':
+        reason = data.get('reason')
+        if reason not in ('pwc_detail_403_search_empty', 'workday_detail_403_search_empty',
+                          'official_detail_410'):
             raise ValueError('Unsupported unavailability evidence')
         conn = connection()
         with run_pipeline.exclusive_cycle(Path(database).parent / 'pipeline.lock'), conn:
@@ -485,9 +488,19 @@ def register_routes(application, connection, database):
                 return {'error': 'Subscription changed; unavailability discarded'}, 409
             company = conn.execute('SELECT career_source,active FROM companies WHERE id=?', (job['company_id'],)).fetchone()
             raw = json.loads(job['raw_json'])
-            if (not company['active'] or company['career_source'] != 'pwc' or
-                    raw.get('career_source') != 'pwc' or
-                    re.fullmatch(r'[0-9]+WD(?:-[0-9]+)?', job['external_id']) is None):
+            from backend.career_sources import SOURCES, WORKDAY
+            source = company['career_source']
+            valid_source = (company['active'] and source in SOURCES and
+                            raw.get('career_source') == source and SOURCES[source][1] != 'blocked')
+            if reason == 'pwc_detail_403_search_empty':
+                valid_evidence = (source == 'pwc' and
+                                  re.fullmatch(r'[0-9]+WD(?:-[0-9]+)?', job['external_id']) is not None)
+            elif reason == 'workday_detail_403_search_empty':
+                valid_evidence = (source in WORKDAY and source != 'pwc' and
+                                  re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9-]{0,99}', job['external_id']) is not None)
+            else:
+                valid_evidence = valid_source
+            if not valid_source or not valid_evidence:
                 raise ValueError('Unavailability does not belong to a supported requisition')
             if not job['is_active']:
                 return {'saved': True, 'already_inactive': True}

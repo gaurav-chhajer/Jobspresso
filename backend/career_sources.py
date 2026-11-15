@@ -847,7 +847,11 @@ def _listings(feed, rows=None):
 
 
 class CareerJobUnavailable(ValueError):
-    """A denied Workday detail was independently absent from its public search."""
+    """The official career source independently confirmed a posting is unavailable."""
+
+    def __init__(self, message, *, reason='pwc_detail_403_search_empty'):
+        super().__init__(message)
+        self.reason = reason
 
 
 class CareerDescriptionIncomplete(ValueError):
@@ -974,16 +978,25 @@ def prepare_job(job_row, deadline=None):
             try:
                 detail = feed.json(f'/wday/cxs/{tenant}/{site}' + path[len(prefix):])['jobPostingInfo']
             except requests.HTTPError as error:
-                reference = re.fullmatch(r'([0-9]+WD)(?:-[0-9]+)?', result['external_id'])
-                if (key != 'pwc' or error.response is None or error.response.status_code != 403 or
-                        reference is None):
+                if error.response is None or error.response.status_code != 403:
                     raise
-                # PwC returns 403 for withdrawn postings too. A denial alone is
-                # insufficient: only an empty official requisition search retires it.
+                if key == 'pwc':
+                    reference = re.fullmatch(r'([0-9]+WD)(?:-[0-9]+)?', result['external_id'])
+                    search_text = reference[1] if reference else None
+                    unavailable_reason = 'pwc_detail_403_search_empty'
+                else:
+                    reference = re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9-]{0,99}', result['external_id'])
+                    search_text = result['external_id'] if reference else None
+                    unavailable_reason = 'workday_detail_403_search_empty'
+                if search_text is None:
+                    raise
+                # Workday may deny details for withdrawn roles. A denial alone
+                # is insufficient: an exact official search must also be empty.
                 search = feed.json(f'/wday/cxs/{tenant}/{site}/jobs', data=dict(
-                    appliedFacets={}, limit=20, offset=0, searchText=reference[1]))
+                    appliedFacets={}, limit=20, offset=0, searchText=search_text))
                 if type(search.get('total')) is int and search['total'] == 0 and search.get('jobPostings') == []:
-                    raise CareerJobUnavailable('PwC requisition is no longer published') from error
+                    raise CareerJobUnavailable('Workday requisition is no longer published',
+                                               reason=unavailable_reason) from error
                 raise
             description = detail['jobDescription']
             title, location = detail['title'], detail.get('location')

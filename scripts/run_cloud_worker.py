@@ -503,10 +503,10 @@ def _score_pending(client, deadline, pool, successful=None, failed=False, stop=N
             scores += 1
             try:
                 prepared = career_sources.prepare_job(item['job'], deadline - 120)
-            except career_sources.CareerJobUnavailable:
+            except career_sources.CareerJobUnavailable as unavailable:
                 try:
                     reply = client.call('job-unavailable', dict(user_id=after, job_id=item['job']['id'],
-                        fingerprint=item['fingerprint'], reason='pwc_detail_403_search_empty'))
+                        fingerprint=item['fingerprint'], reason=unavailable.reason))
                     if reply.get('saved') is not True:
                         raise RuntimeError('Unavailable posting was not acknowledged')
                 except HostedInputsChanged:
@@ -521,6 +521,24 @@ def _score_pending(client, deadline, pool, successful=None, failed=False, stop=N
                 continue
             except (requests.RequestException, ValueError, KeyError, TypeError) as error:
                 response = error.response if isinstance(error, requests.RequestException) else None
+                if response is not None and response.status_code == 410:
+                    try:
+                        reply = client.call('job-unavailable', dict(user_id=after,
+                            job_id=item['job']['id'], fingerprint=item['fingerprint'],
+                            reason='official_detail_410'))
+                        if reply.get('saved') is not True:
+                            raise RuntimeError('Unavailable posting was not acknowledged')
+                    except HostedInputsChanged:
+                        logger.info('Unavailable posting inputs changed: job_id=%s; latest state remains authoritative.',
+                                    item['job']['id'])
+                    except (requests.RequestException, RuntimeError, ValueError, KeyError, TypeError) as update_error:
+                        logger.error('Unavailable posting update failed: job_id=%s error=%s; remaining work deferred',
+                                     item['job']['id'], type(update_error).__name__)
+                        return 1
+                    else:
+                        logger.info('Officially unavailable posting removed from active scoring queue: job_id=%s',
+                                    item['job']['id'])
+                    continue
                 logger.error('Career description failed: user_id=%s job_id=%s error=%s http_status=%s; candidate deferred',
                              after, item['job']['id'], type(error).__name__,
                              response.status_code if response is not None else 'unavailable')

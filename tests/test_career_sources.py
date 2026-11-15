@@ -4,6 +4,8 @@ import json
 import unittest
 from unittest.mock import patch
 
+import requests
+
 from backend import career_sources as sources
 
 
@@ -76,6 +78,22 @@ class CareerSourceTests(unittest.TestCase):
         self.assertEqual(request.call_args.args[0], '/wday/cxs/postman/careers/jobs')
         self.assertEqual(jobs[0]['url'],
                          'https://postman.wd108.myworkdayjobs.com/en-US/careers/job/India/Engineer_JR1')
+
+    def test_workday_403_requires_an_empty_exact_official_search(self):
+        candidate = sources.job('postman', 'JR1000052', 'Engineer', 'India',
+                                'https://postman.wd108.myworkdayjobs.com/en-US/careers/job/India/Engineer_JR1000052')
+        candidate['raw_json'] = json.dumps(candidate['raw_json'])
+        response = requests.Response()
+        response.status_code = 403
+        denied = requests.HTTPError(response=response)
+        with patch.object(sources.Feed, 'json', side_effect=[denied, dict(total=0, jobPostings=[])]) as request:
+            with self.assertRaises(sources.CareerJobUnavailable) as caught:
+                sources.prepare_job(candidate)
+        self.assertEqual(caught.exception.reason, 'workday_detail_403_search_empty')
+        self.assertEqual(request.call_args.kwargs['data']['searchText'], 'JR1000052')
+        with patch.object(sources.Feed, 'json', side_effect=[denied, dict(total=1, jobPostings=[{}])]):
+            with self.assertRaises(requests.HTTPError):
+                sources.prepare_job(candidate)
 
     def test_jibe_complete_pages_and_description_change_fingerprint(self):
         item = dict(slug='123', title='Analyst', language='en-us',

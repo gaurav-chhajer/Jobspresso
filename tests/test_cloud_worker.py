@@ -140,6 +140,22 @@ class CloudEndpointTests(unittest.TestCase):
         self.assertEqual(counts, [self.conn.execute('SELECT COUNT(*) FROM ' + table).fetchone()[0]
                                   for table in ('jobs', 'scores')])
 
+    def test_verified_workday_and_http_410_retirement_preserve_history(self):
+        cases = (
+            ('postman', 'JR1000052', 'workday_detail_403_search_empty'),
+            ('idfc', 'P-226902', 'official_detail_410'),
+        )
+        for source, external_id, reason in cases:
+            with self.subTest(reason=reason):
+                self.conn.execute('UPDATE jobs SET is_active=1,external_id=?,raw_json=? WHERE id=1',
+                                  (external_id, json.dumps(dict(career_source=source))))
+                self.conn.execute('UPDATE companies SET career_source=? WHERE id=1', (source,))
+                self.conn.commit()
+                item = self.item()
+                data = dict(user_id=1, job_id=1, fingerprint=item['fingerprint'], reason=reason)
+                self.assertEqual(self.call('job-unavailable', data).json, dict(saved=True))
+                self.assertEqual(self.conn.execute('SELECT is_active FROM jobs WHERE id=1').fetchone()[0], 0)
+
     def test_unavailability_rejects_unsupported_source_and_changed_inputs(self):
         item = self.item()
         data = dict(user_id=1, job_id=item['job']['id'], fingerprint=item['fingerprint'],
@@ -158,6 +174,35 @@ class CloudEndpointTests(unittest.TestCase):
             self.assertNotIn(secret_field, payload["items"][0]["user"])
         self.assertEqual(self.call("work?after=1").json, dict(items=[], next=None))
         self.assertEqual(self.call("work?after=-1").status_code, 400)
+
+    def test_http_410_job_is_retired_and_next_candidate_can_be_scored(self):
+        first = dict(user=dict(id=1, resume_text='Synthetic'), job=dict(id=1, company_id=1, raw_json='{}'),
+                     company_name='Synthetic', fingerprint='0' * 64)
+        second = dict(user=first['user'], job=dict(id=2, company_id=1, raw_json='{}'),
+                      company_name='Synthetic', fingerprint='1' * 64)
+        client, pool = MagicMock(), MagicMock()
+        def hosted_call(route, data=None):
+            if route == 'work?after=0':
+                return dict(next=1, items=[first, second])
+            if route == 'job-unavailable':
+                return dict(saved=True)
+            if route == 'score':
+                return dict(saved=True)
+            if route == 'work?after=1':
+                return dict(next=None, items=[])
+            self.fail('Unexpected hosted operation')
+        client.call.side_effect = hosted_call
+        gone = requests.Response()
+        gone.status_code = 410
+        failure = requests.HTTPError(response=gone)
+        pool.score.return_value = {}
+        with patch.object(runner.career_sources, 'prepare_job', side_effect=[failure, second['job']]), \
+                patch.object(runner.time, 'monotonic', return_value=0):
+            self.assertEqual(runner._score_pending(client, 3000, pool), 0)
+        unavailable = next(call.args[1] for call in client.call.call_args_list
+                           if call.args[0] == 'job-unavailable')
+        self.assertEqual(unavailable['reason'], 'official_detail_410')
+        self.assertEqual(pool.score.call_count, 1)
 
     def test_score_validation_deduplication_and_changed_resume(self):
         data = self.score_data(self.item())
