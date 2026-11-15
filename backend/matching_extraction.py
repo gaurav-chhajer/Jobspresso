@@ -26,7 +26,7 @@ TAXONOMY_VERSION = _TAXONOMY["taxonomy_version"]
 IMPLIES = {source: tuple(targets) for source, targets in _TAXONOMY["implies"].items()}
 BLOCKED_SKILL_PAIRS = frozenset(frozenset(pair) for pair in _TAXONOMY["blocked_pairs"])
 FUZZY_SKILL_THRESHOLD = 0.92
-PARSER_VERSION = "jd-requirements-v2"
+PARSER_VERSION = "jd-requirements-v3"
 
 
 _SECTION_NAMES = {
@@ -51,6 +51,8 @@ _SECTION_NAMES = {
     "certifications": ("certifications", "certificates"),
 }
 _HEADER_LOOKUP = {alias: name for name, aliases in _SECTION_NAMES.items() for alias in aliases}
+_NON_REQUIREMENTS_HEADING = re.compile(
+    r"^(?:how\s+.{1,80}\s+works|why\s+apply\s+through\s+.{1,80})[?!:.\s]*$", re.I)
 _MUST_CUE = re.compile(r"\b(?:must|required|mandatory|essential|minimum|at least|need to|needs to)\b", re.I)
 _NICE_CUE = re.compile(r"\b(?:preferred|nice to have|bonus|a plus|would be a plus|desirable|ideally)\b", re.I)
 _YEAR_RANGE = re.compile(
@@ -103,9 +105,11 @@ def normalize_text(value):
 
 
 def _section_header(line):
-    cleaned = re.sub(r"^[\s#>*\u2022\-]+|[\s:\uff1a]+$", "", line).casefold()
+    cleaned = re.sub(r"^[\s#>*\u2022\-]+|[\s:?!\uff1a]+$", "", line).casefold()
     cleaned = re.sub(r"\s+", " ", cleaned)
     cleaned = re.sub(r"\s*\((?:must[- ]?haves?|requirements?|required)\)\s*$", "", cleaned)
+    if _NON_REQUIREMENTS_HEADING.fullmatch(cleaned):
+        return "non_requirements"
     return _HEADER_LOOKUP.get(cleaned)
 
 
@@ -164,6 +168,7 @@ _UNKNOWN_STOPWORDS = {"and", "api", "bachelor", "bachelors", "ceo", "cto", "deve
                       "jd", "join", "mba", "ms", "must", "of", "or", "preferred", "programmer",
                       "proficiency", "required", "role", "software", "sops", "strong", "team", "usa", "with"}
 _UNKNOWN_STOPWORDS.update({"apply", "master", "masters", "computer", "science", "engineering", "education", "knowledge", "familiarity", "minimum", "additional", "proficient", "skills", "tools", "technologies", "what", "nice", "haves", "offer", "benefits", "perks", "compensation", "salary", "united", "states", "kingdom", "singapore", "practical", "specialization"})
+_UNKNOWN_STOPWORDS.update({"code", "context", "hands", "how", "jobgether", "protocol", "relations", "storage", "why", "cloud"})
 _AMBIGUOUS_SKILLS = frozenset(("Go", "Excel", "REST", "React", "Spring", "Swift", "Room", "Sales", "Marketing"))
 _TECHNICAL_CONTEXT = re.compile(
     r"\b(?:developer|engineer|programmer|software|framework|api|database|programming|application|app|"

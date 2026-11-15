@@ -49,6 +49,25 @@ class CloudEndpointTests(unittest.TestCase):
         self.addCleanup(response.request.input_stream.close)
         return response
 
+    def test_rescore_boilerplate_only_requeues_exact_noise_items(self):
+        self.conn.execute("UPDATE scores SET is_stale=0,missing_requirements=? WHERE job_id=1",
+                          (json.dumps(["How", "Benefits", "AWS"]),))
+        self.conn.execute("UPDATE scores SET is_stale=0,missing_requirements=? WHERE job_id=2",
+                          (json.dumps(["Experience with How to debug"]),))
+        self.conn.commit()
+
+        response = self.call("rescore-boilerplate", {})
+
+        self.assertEqual(response.status_code, 200, response.json)
+        self.assertEqual(response.json["staled"], 1)
+        self.assertEqual(response.json["users_queued"], 1)
+        self.assertEqual(self.conn.execute(
+            "SELECT is_stale FROM scores WHERE user_id=1 AND job_id=1").fetchone()[0], 1)
+        self.assertEqual(self.conn.execute(
+            "SELECT is_stale FROM scores WHERE user_id=1 AND job_id=2").fetchone()[0], 0)
+        self.assertEqual(self.conn.execute(
+            "SELECT status FROM matching_tasks WHERE user_id=1").fetchone()[0], "pending")
+
     def test_onboarding_reminder_is_due_once_for_incomplete_resume(self):
         self.conn.execute("UPDATE users SET resume_text='' WHERE id=1")
         self.conn.commit()

@@ -71,6 +71,23 @@ class MatchingExtractionTests(unittest.TestCase):
                 "Must have BNPL, BRE, DPD, EAD, ECL, GNPA, LGD, NPA, RCA, and KRs")
         self.assertEqual(extraction.unknown_skill_candidates(text), [])
 
+    def test_jobgether_boilerplate_and_generic_words_are_not_requirements(self):
+        text = ("Strong programming skills in Python, with solid experience in TypeScript and Node.js.\n"
+                "Hands-on experience with AI coding agents and development tools such as Claude Code, Cursor, or Codex.\n"
+                "Familiarity with the Model Context Protocol (MCP) or similar tool-calling interfaces.\n"
+                "Experience publishing and maintaining software packages through PyPI and npm, including version management, CI/CD pipelines, testing, and release processes.\n"
+                "Experience with AWS or Google Cloud data services, including S3, Cloud Storage, and BigQuery, or with Snowflake.\n"
+                "Previous experience maintaining open-source projects or working in Developer Relations.\n"
+                "Benefits:\nHow Jobgether works:\nWhy Apply Through Jobgether?\n"
+                "Applications are handled by Jobgether.")
+        sections = extraction.split_sections(text)
+        self.assertEqual(sections[-1]["name"], "non_requirements")
+        unknown = {skill for item in extraction.extract_jd_requirements(text)
+                   for skill in item["unknown_skills"]}
+        self.assertTrue({"PyPI", "BigQuery", "Snowflake"}.issubset(unknown))
+        self.assertTrue({"Code", "Context", "Hands", "How", "Jobgether", "Protocol",
+                         "Relations", "Storage", "Why"}.isdisjoint(unknown))
+
     def test_generic_application_language_does_not_make_domain_acronyms_technical_skills(self):
         text = "Requirements\nApply knowledge of PD, EAD, and LGD models to evaluate credit risk required"
         requirement, = extraction.extract_jd_requirements(text)
