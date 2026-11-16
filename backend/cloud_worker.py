@@ -338,7 +338,10 @@ def register_routes(application, connection, database):
         candidates = pipeline.filter_candidate_jobs(conn, role_titles.filtering_user(user, profile))
         if company_values:
             # Failed boards must not consume the bounded batch's candidate slots.
-            candidates = [job for job in candidates if job["company_id"] in company_ids]
+            yc_selected = conn.execute("SELECT 1 FROM companies WHERE career_source='yc' AND id IN (" +
+                                       ','.join('?' for _ in company_ids) + ')', tuple(company_ids)).fetchone()
+            candidates = [job for job in candidates if job["company_id"] in company_ids or
+                          yc_selected and json.loads(job['raw_json'] or '{}').get('career_source') == 'yc']
         if not candidates and (profile is not None or conn.execute(
                 'SELECT 1 FROM user_settings WHERE user_id=? AND subscriptions_configured=1', (user['id'],)).fetchone()):
             return empty_work()

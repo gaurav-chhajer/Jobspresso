@@ -22,6 +22,7 @@ LEVER_PAGE_SIZE = 100
 CONNECT_TIMEOUT_SECONDS = 15
 READ_TIMEOUT_SECONDS = 60
 SOURCES = {
+    'yc': ('Y Combinator startup jobs', 'yc', 'https://www.ycombinator.com'),
     'synechron': ('Synechron', 'workday', 'https://synechron.wd1.myworkdayjobs.com'),
     'hsbc': ('HSBC', 'eightfold', 'https://portal.careers.hsbc.com'),
     'postman': ('Postman', 'workday', 'https://postman.wd108.myworkdayjobs.com'),
@@ -112,7 +113,7 @@ VERIFIED_WORLDWIDE_SOURCES = ('supabase', 'camunda', 'livekit', 'atticus', 'alpa
                               'highlevel', 'gitlab', 'grafana', 'wikimedia', 'remote',
                               'atlassian', 'toptal', 'deel', 'elastic', 'zapier',
                               'automattic', 'shopify', 'github', 'drivetrain',
-                              'smartworking', 'sprinto', 'jobgether', 'weekday')
+                              'smartworking', 'sprinto', 'jobgether', 'weekday', 'yc')
 BOARD_SLUGS = {'instrumentl': 'Instrumentl', 'sourcegraph': 'sourcegraph91',
                'xapo': 'xapo61', 'clearer': 'Clearer', 'highlevel': 'gohighlevel',
                'grafana': 'grafanalabs', 'duckduckgo': 'duck-duck-go',
@@ -444,6 +445,9 @@ def _listings(feed, rows=None):
     rows = [] if rows is None else rows
     expected = None
     slug = BOARD_SLUGS.get(key, key)
+    if kind == 'yc':
+        from backend.yc_career_source import listings
+        return listings(feed, rows)
     if kind in ('remote', 'atlassian', 'deel', 'shopify'):
         from backend.remote_career_sources import listings
         return listings(feed, rows)
@@ -1040,6 +1044,9 @@ def prepare_job(job_row, deadline=None):
             employment = raw.get('employmentType')
         else:
             detail = structured_job(feed.request(result['url']))
+            if key == 'yc' and (not isinstance(detail.get('hiringOrganization'), dict) or
+                               detail['hiringOrganization'].get('name') != raw.get('employer_name')):
+                raise ValueError('YC job employer changed since fetching')
             description = detail['description']
             title = detail['title']
             employment = detail.get('employmentType')

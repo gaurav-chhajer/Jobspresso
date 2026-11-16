@@ -101,7 +101,7 @@ def fetch_cycle(database, writes, stop, ready):
     deadline = time.monotonic() + CYCLE_SECONDS
     with closing(connect(database)) as conn:
         companies = conn.execute('''SELECT id,name,ats_type,board_slug,career_source,active
-            FROM companies WHERE active=1 ORDER BY id LIMIT ?''', (MAX_COMPANIES + 1,)).fetchall()
+            FROM companies WHERE active=1 AND discovery_only=0 ORDER BY id LIMIT ?''', (MAX_COMPANIES + 1,)).fetchall()
         if len(companies) > MAX_COMPANIES:
             raise ValueError('Company catalog exceeds cycle limit')
         for row in companies:

@@ -12,6 +12,21 @@ from tests.test_cloud_worker import CloudEndpointTests
 
 
 class ObservationEndpointTests(CloudEndpointTests):
+    def test_yc_catalog_and_observations_keep_employers_and_queue_work(self):
+        from tests.test_yc_career_source import YCTests, posting
+        self.assertEqual(self.call('sync-catalog', {'sources': ['yc']}).status_code, 200)
+        source = next(row for row in self.call('companies').json['companies'] if row['career_source'] == 'yc')
+        jobs = YCTests().fetch([posting(101, 'Startup Alpha', 'startup-alpha'),
+                               posting(102, 'Startup Beta', 'startup-beta')])
+        payload = dict(company_id=source['id'], fingerprint=source['fingerprint'], mode='observed', jobs=jobs)
+        for _ in range(2):
+            self.assertEqual(self.call('observations', payload).status_code, 200)
+        rows = self.conn.execute("SELECT c.name,j.external_id FROM jobs j JOIN companies c ON c.id=j.company_id WHERE j.external_id LIKE 'yc-%' ORDER BY j.external_id").fetchall()
+        self.assertEqual([tuple(row) for row in rows], [('Startup Alpha', 'yc-101'), ('Startup Beta', 'yc-102')])
+        self.assertFalse(any(row['board_slug'].startswith('yc-employer-') for row in self.call('companies').json['companies']))
+        work = self.call('work?company_id=' + str(source['id'])).json['items']
+        self.assertEqual({item['company_name'] for item in work}, {'Startup Alpha', 'Startup Beta'})
+
     def test_catalog_adds_verified_hsbc_once_without_changing_settings(self):
         for _ in range(2):
             self.assertEqual(self.call('sync-catalog', {'sources': ['hsbc']}).status_code, 200)

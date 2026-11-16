@@ -217,6 +217,14 @@ def upsert_jobs(conn, company_id, fetched_jobs, *, additive=False):
         raise ValueError('Additive ingestion must be boolean')
     mode = 'observed' if additive else mode_for_source(company[0])
     fetched_jobs = deduplicate(fetched_jobs, mode)
+    yc_employers = None
+    if company[0] == 'yc':
+        from backend.yc_career_source import employer
+        yc_employers = [employer(job.get('raw_json', {})) for job in fetched_jobs]
+        if any(job.get('raw_json', {}).get('career_source') != 'yc' for job in fetched_jobs):
+            raise ValueError('YC ingestion requires YC source metadata')
+    source_company_id = company_id
+    changed_companies = set()
     changed = []
     with conn:
         now = datetime.now(timezone.utc).isoformat()
@@ -232,7 +240,14 @@ def upsert_jobs(conn, company_id, fetched_jobs, *, additive=False):
         discovery_by_url = {row[3].rstrip('/'): row[:3] for row in conn.execute(
             "SELECT id,external_id,raw_json,url FROM jobs WHERE company_id=? AND external_id LIKE 'tavily-%'",
             (company_id,)) if row[3] and json.loads(row[2] or '{}').get('discovery_source') == 'tavily'}
-        for job in fetched_jobs:
+        for index, job in enumerate(fetched_jobs):
+            if yc_employers is not None:
+                name, slug = yc_employers[index]
+                board = 'yc-employer-' + slug
+                conn.execute('''INSERT INTO companies(name,ats_type,board_slug,discovery_only)
+                    VALUES(?,'greenhouse',?,1) ON CONFLICT(ats_type,board_slug) DO NOTHING''', (name, board))
+                company_id = conn.execute("SELECT id FROM companies WHERE ats_type='greenhouse' AND board_slug=?",
+                                          (board,)).fetchone()[0]
             incoming = dict(job.get("raw_json", {}))
             discovery = incoming.get('discovery_source') == 'tavily'
             if job.get('url'):
@@ -277,6 +292,7 @@ def upsert_jobs(conn, company_id, fetched_jobs, *, additive=False):
                                tuple(previous[3:]) != (job['title'], job.get('location'), job.get('department'), job.get('url')))
             if listing_changed:
                 changed.append(job['external_id'])
+                changed_companies.add(company_id)
             if previous and listing_changed:
                 conn.execute("UPDATE scores SET is_stale=1 WHERE job_id=?", (previous[0],))
             conn.execute(
@@ -302,7 +318,8 @@ def upsert_jobs(conn, company_id, fetched_jobs, *, additive=False):
             conn.execute("UPDATE jobs SET is_active=0 WHERE company_id=?", (company_id,))
         snapshot = {job["external_id"]: json.dumps(job.get("raw_json", {})) for job in fetched_jobs}
         if changed or mode == 'snapshot' and snapshot != previous_snapshot:
-            matching_tasks.enqueue_company(conn, company_id, datetime.now(timezone.utc))
+            for target in changed_companies or {source_company_id}:
+                matching_tasks.enqueue_company(conn, target, datetime.now(timezone.utc))
     return changed
 
 

@@ -1,5 +1,7 @@
 # Jobspresso
 
+YC startup jobs use the existing shared-pool fetch and worker sync. Public YC role/location pages are collected without Tavily; stable YC job IDs are stored under each startup's employer identity. These curated pages are additive observations, not a complete vacancy feed: missing listings never close saved jobs. Existing senior-role eligibility filtering still applies. Full descriptions are fetched from public job pages when scoring needs them. A local fetch seeds the `yc` catalog entry; hosted workers require the updated server and catalog sync before fetching YC.
+
 Jobspresso tracks company openings, evaluates resume fit with deterministic scoring, and lets users review evidence, manage applications, and receive eligible match digests. The authenticated Flask app keeps scoring independent from optional LLM explanations.
 
 The live UI is rendered from `frontend/templates/` with assets in `frontend/static/`. `frontend/jobspresso.zip` is the updated student/admin visual reference; `frontend/jobspresso_ui/` preserves the earlier reference. The Flask pages reuse the design while retaining server-side routes, forms, and data. Demo handlers and local-storage data do not power the authenticated app. See `frontend/README.md` for the source-of-truth map, migration requirements, and offline admin/UI checks. Local review outputs and older static previews are archived under `not needed/` and are excluded from git.

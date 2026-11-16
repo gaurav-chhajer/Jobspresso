@@ -18,6 +18,8 @@ MAX_LOCAL_JOBS = 100000
 
 def identity(company):
     source = company['career_source']
+    if source is None and company['board_slug'].startswith('yc-employer-'):
+        return ('career', 'yc')
     return ('career', source) if source else (company['ats_type'], company['board_slug'])
 
 
