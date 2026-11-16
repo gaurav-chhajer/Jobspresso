@@ -114,7 +114,7 @@ def fuzzy_skill_matches(resume_mentions, jd_mentions, scorer, *, threshold=FUZZY
 
 def fuzzy_unknown_skill_matches(resume_text, jd_text, scorer, *, resume_owner, jd_owner,
                                 threshold=FUZZY_SKILL_THRESHOLD):
-    """Compare unknown JD requirement terms to raw phrases in the resume skills section."""
+    """Propose unknown-label similarities for review, never scoring authorization."""
     if (not isinstance(resume_owner, str) or not resume_owner.strip() or len(resume_owner) > 200 or
             not isinstance(jd_owner, str) or not jd_owner.strip() or len(jd_owner) > 200):
         raise ValueError("Fuzzy matching owners must be bounded text")

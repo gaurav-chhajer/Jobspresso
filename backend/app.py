@@ -158,8 +158,6 @@ def create_app(database_path=None, upload_dir=None):
                 from backend import groq_requirement_assessor
                 requirement_assessments = groq_requirement_assessor.assess(
                     requirements, primary_key=GROQ_API_KEY)
-                assisted_terms = sorted({term for terms in requirement_assessments.values() for term in terms},
-                                        key=str.casefold)
                 try:
                     scorer = local_embeddings.LocalScorer(cache_path=local_embeddings.CACHE_PATH)
                 except (RuntimeError, ImportError) as error:
@@ -172,11 +170,6 @@ def create_app(database_path=None, upload_dir=None):
                     jd_mentions = deterministic_scoring.extraction.extract_skill_mentions(jd_text)
                     fuzzy_pairs = semantic_similarity.fuzzy_skill_matches(
                         resume_mentions, jd_mentions, scorer)
-                    fuzzy_pairs.extend(semantic_similarity.fuzzy_unknown_skill_matches(
-                        resume_text, jd_text + ("\nRequirements\n" + "\n".join(assisted_terms)
-                                                if assisted_terms else ""),
-                        scorer, resume_owner="resume:" + resume_hash,
-                        jd_owner="jd:" + jd_hash))
                 finally:
                     scorer.close()
                 cached = deterministic_scoring.score(

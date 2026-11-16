@@ -242,6 +242,36 @@ class WebFlowTests(unittest.TestCase):
         self.assertNotIn(b'Software Engineer 2',response.data)
         self.assertIn(b'href="/jobs?job=1"',response.data)
 
+    def test_jobs_location_filter_accepts_and_preserves_typed_places(self):
+        self.seed_user()
+        response = self.client.get('/jobs?location=Buenos+Aires&min_score=0')
+        self.assertEqual(response.status_code, 200)
+        self.assertRegex(response.data, rb'<input\b[^>]*name="location"[^>]*value="Buenos Aires"')
+        self.assertNotRegex(response.data, rb'<select\b[^>]*name="location"')
+        self.assertIn(b'aria-label="Filter by city, region or country"', response.data)
+
+    def test_named_skill_chips_do_not_repeat_requirement_sentences(self):
+        self.seed_user()
+        self.conn.execute("UPDATE users SET resume_text='Skills: SQL' WHERE id=1")
+        self.conn.execute('UPDATE jobs SET raw_json=? WHERE id=1',
+                          (json.dumps({'content': '<h2>Requirements</h2><p>Technical Skills: Strong Python experience</p>'}),))
+        self.conn.commit()
+        user = dict(self.conn.execute('SELECT * FROM users WHERE id=1').fetchone())
+        job = dict(self.conn.execute('SELECT * FROM jobs WHERE id=1').fetchone())
+        scorer = type('Scorer', (), {'conn': self.conn})()
+        with patch('backend.career_sources.prepare_job', side_effect=lambda value: dict(value)), \
+                patch('backend.semantic_similarity.section_similarity', return_value=0.5), \
+                patch('backend.semantic_similarity.fuzzy_skill_matches', return_value=[]), \
+                patch('backend.groq_requirement_assessor.assess', return_value={}):
+            result = pipeline_skeleton.score_job_deterministic(user, job, 'Alpha', scorer)
+        pipeline_skeleton.store_score(self.conn, 1, 1, result)
+        response = self.client.get('/jobs?job=1')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'<span class="tag gap">Python</span>', response.data)
+        self.assertNotIn(b'<span class="tag gap">Technical</span>', response.data)
+        self.assertNotIn(b'<span class="tag gap">Strong Python experience</span>', response.data)
+        self.assertIn(b'<q>Strong Python experience</q>', response.data)
+
     def test_migration_is_idempotent_and_preserves_existing_records(self):
         self.seed_user()
         before = self.conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]

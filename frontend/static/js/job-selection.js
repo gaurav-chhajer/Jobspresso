@@ -5,9 +5,18 @@
   let panel = document.getElementById('job-detail');
   if (!list || !status || !panel) return;
   const slider = document.getElementById('jobs-score');
-  if (slider) slider.addEventListener('input', () => {
-    slider.nextElementSibling.value = `${slider.value}%`;
-  });
+  if (slider) {
+    const updateScoreSlider = () => {
+      const min = Number(slider.min);
+      const max = Number(slider.max);
+      const range = max - min;
+      const progress = range > 0 ? Math.max(0, Math.min(100, ((Number(slider.value) - min) / range) * 100)) : 0;
+      slider.style.setProperty('--score-progress', `${progress}%`);
+      slider.nextElementSibling.value = `${slider.value}%`;
+    };
+    slider.addEventListener('input', updateScoreSlider);
+    updateScoreSlider();
+  }
   const companyChoices = [...list.querySelectorAll('[data-company-choice]')];
   const companyPanels = [...list.querySelectorAll('[data-company-panel]')];
   function showCompany(companyId) {
@@ -42,7 +51,7 @@
     pending = controller;
     const timeout = window.setTimeout(() => controller.abort(), 8000);
     panel.setAttribute('aria-busy', 'true');
-    status.textContent = 'Loading selected matchâ€¦';
+    status.textContent = 'Loading selected match...';
     try {
       // Reuse authenticated, escaped HTML; retain the surrounding page and its scroll position.
       const response = await fetch(url.href, {signal: controller.signal, cache: 'no-store', redirect: 'error'});

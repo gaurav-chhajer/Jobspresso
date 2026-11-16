@@ -245,10 +245,11 @@ body, .app, .site-header, .app .card, .app .job-tile, .app .col, .app :is(input,
 .app .jobs-filters .rng { min-height: 44px; margin: 0; font-size: 14px; white-space: nowrap; }
 .app .jobs-filters input[type=checkbox] { width: 18px; height: 18px; min-height: 18px; padding: 0; flex: none; }
 .app .jobs-score { display: grid; grid-template-columns: auto minmax(100px, 180px) 44px; align-items: center; gap: 12px; font-size: 14px; }
-.app .jobs-score input[type=range] { appearance: none; width: 100%; min-width: 0; height: 44px; min-height: 44px; padding: 0; border: 0; background: transparent; cursor: pointer; }
-.app .jobs-score input::-webkit-slider-runnable-track { height: 6px; border-radius: 99px; background: var(--jp-line); }
+.app .jobs-score input[type=range] { --score-progress: 0%; appearance: none; width: 100%; min-width: 0; height: 44px; min-height: 44px; padding: 0; border: 0; background: transparent; cursor: pointer; }
+.app .jobs-score input::-webkit-slider-runnable-track { height: 6px; border-radius: 99px; background: linear-gradient(to right, var(--jp-accent) 0%, var(--jp-accent) var(--score-progress), var(--jp-line) var(--score-progress), var(--jp-line) 100%); }
 .app .jobs-score input::-webkit-slider-thumb { appearance: none; width: 18px; height: 18px; margin-top: -6px; border: 2px solid var(--jp-card); border-radius: 50%; background: var(--jp-accent); box-shadow: 0 0 0 1px var(--jp-accent); }
 .app .jobs-score input::-moz-range-track { height: 6px; border-radius: 99px; background: var(--jp-line); }
+.app .jobs-score input::-moz-range-progress { height: 6px; border-radius: 99px; background: var(--jp-accent); }
 .app .jobs-score input::-moz-range-thumb { width: 14px; height: 14px; border: 2px solid var(--jp-card); border-radius: 50%; background: var(--jp-accent); box-shadow: 0 0 0 1px var(--jp-accent); }
 .app .jobs-score output { padding: 4px 6px; border-radius: 7px; background: var(--jp-soft); text-align: center; font-weight: 700; font-variant-numeric: tabular-nums; }
 .jobs-filter-actions { display: flex; gap: 10px; margin-left: auto; }

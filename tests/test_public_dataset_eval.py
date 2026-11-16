@@ -21,10 +21,11 @@ class PublicDatasetEvalTests(unittest.TestCase):
         with patch("backend.semantic_similarity.section_similarity", return_value=.5), \
                 patch("backend.semantic_similarity.fuzzy_skill_matches", return_value=[]), \
                 patch("backend.semantic_similarity.fuzzy_unknown_skill_matches", return_value=[
-                    dict(jd_skill="Scrum", resume_skill="SCRUM", cosine=1.0, type="fuzzy")]):
+                    dict(jd_skill="Scrum", resume_skill="SCRUM", cosine=1.0, type="fuzzy")]) as unknown:
             result = public_dataset_eval.score_pair("Skills\nSCRUM", "Requirements\nScrum", object(), owner="test")
         self.assertEqual(result["missing_must_have"], [])
         self.assertFalse(any(item["type"] == "fuzzy" for item in result["matched"]))
+        unknown.assert_not_called()
 
     def test_implied_match_is_not_resubmitted_as_fuzzy(self):
         from unittest.mock import patch

@@ -37,26 +37,12 @@ def score_pair(resume_text, jd_text, scorer, *, owner, job_title=""):
     resume_mentions = deterministic_scoring.extraction.extract_skill_mentions(resume_text)
     jd_mentions = deterministic_scoring.extraction.extract_skill_mentions(jd_text)
     fuzzy_pairs = semantic_similarity.fuzzy_skill_matches(resume_mentions, jd_mentions, scorer)
-    fuzzy_pairs.extend(semantic_similarity.fuzzy_unknown_skill_matches(
-        resume_text, jd_text, scorer, resume_owner=f"{owner}:resume:{resume_hash}",
-        jd_owner=f"{owner}:jd:{jd_hash}"))
     eligible_requirements = deterministic_scoring.extraction.extract_jd_requirements(jd_text)
     eligible_jd = {skill for item in eligible_requirements
                    if item["priority"] in {"must_have", "nice_to_have", "inferred_must_have"}
-                   for skill in (*item["skills"], *item["unknown_skills"])}
+                   for skill in item["skills"]}
     matched_jd = {item["skill"] for item in deterministic_scoring.extraction.expand_implied_skills(resume_mentions)
                   if item["evidence_credit"] > 0}
-    # The scorer already credits literal unknown labels before validating fuzzy
-    # matches. Case-only variants must not be sent back as new fuzzy evidence.
-    unknown_labels = {skill for item in eligible_requirements for skill in item["unknown_skills"]}
-    for skill in unknown_labels:
-        pattern = deterministic_scoring.extraction._skill_pattern(skill)
-        for section in deterministic_scoring.extraction.split_sections(resume_text):
-            if section["name"] not in {"skills", "experience", "projects"}:
-                continue
-            if any(pattern.search(line) and not re.search(r"\b(?:no experience|never|learning|beginner)\b", line, re.I)
-                   for line in section["text"].splitlines()):
-                matched_jd.add(skill)
     accepted_pairs = []
     used_resume_terms = set()
     accepted_jd_terms = set()

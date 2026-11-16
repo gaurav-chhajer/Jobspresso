@@ -9,7 +9,7 @@ from datetime import date
 from backend import matching_extraction as extraction
 
 
-SCORER_VERSION = "deterministic-v9"
+SCORER_VERSION = "deterministic-v10"
 WEIGHTS_VERSION = "weights-v2"
 WEIGHTS = {
     "must_have": 40,
@@ -131,25 +131,15 @@ def _education_evidence_matches(required, actual):
     return bool(required["levels"] or required["fields"])
 
 
-def _resume_evidence(resume_text, requirements):
+def _resume_evidence(resume_text):
     mentions = {item["skill"]: item for item in extraction.expand_implied_skills(
                 extraction.extract_skill_mentions(resume_text)) if item["evidence_credit"] > 0}
-    for skill in {skill for item in requirements for skill in item["unknown_skills"]}:
-        pattern = extraction._skill_pattern(skill)
-        for section in extraction.split_sections(resume_text):
-            if section["name"] not in {"skills", "experience", "projects"}:
-                continue
-            for offset, line in enumerate(section["text"].splitlines()):
-                match = pattern.search(line)
-                if match and not re.search(r"\b(?:no experience|never|learning|beginner)\b", line, re.I):
-                    mentions[skill] = dict(skill=skill, matched_text=match.group(), match_type="alias",
-                                          evidence_credit=0.4, section=section["name"], line=section["start_line"] + offset)
     return mentions
 
 
 def pending_fuzzy_matches(resume_text, jd_text, pairs):
     """Omit already-supported proposals; leave invalid proposals for strict validation."""
-    existing = _resume_evidence(resume_text, extraction.extract_jd_requirements(jd_text))
+    existing = _resume_evidence(resume_text)
     return [pair for pair in pairs if not (
         isinstance(pair, dict) and set(pair) == {"jd_skill", "resume_skill", "cosine", "type"}
         and isinstance(pair.get("jd_skill"), str) and pair["jd_skill"] in existing
@@ -176,8 +166,13 @@ def score(resume_text, jd_text, semantic_similarity, *, job_title="", as_of_date
     jd_mentions = extraction.extract_skill_mentions(jd_text, all_mentions=True)
     requirements = extraction.extract_jd_requirements(jd_text, job_title=job_title)
     groq_assessed_clauses = set()
-    original_assisted_unknowns = {}
-    assisted_needs_review = set()
+    assisted_needs_review = {item['text'] for item in requirements if item['unknown_skills']}
+    for item in requirements:
+        validated = extraction.validate_skill_candidates(item['text'], item['skills'])
+        item['skills'] = [mention['skill'] for mention in validated['accepted']]
+        # Candidate discovery stays available through extraction and the review queue.
+        # Unreviewed labels never enter denominators, gaps, or resume matching.
+        item['unknown_skills'] = []
     if requirement_assessments is not None:
         if not isinstance(requirement_assessments, dict):
             raise ValueError("Requirement assessments must be a mapping")
@@ -191,14 +186,13 @@ def score(resume_text, jd_text, semantic_similarity, *, job_title="", as_of_date
             if (item["skills"] or item["minimum_years"] is not None or
                     education_requirement_evidence(item["text"]) or not terms):
                 raise ValueError("Requirement assessment does not target an unassessed clause")
-            known_terms = {mention["skill"] for term in terms
-                           for mention in extraction.extract_skill_mentions(term, section_context="requirements")}
-            original_assisted_unknowns[clause] = set(item["unknown_skills"])
+            validated = extraction.validate_skill_candidates(clause, terms)
+            known_terms = {mention['skill'] for mention in validated['accepted']}
+            if validated['review'] or validated['rejected']:
+                assisted_needs_review.add(clause)
             item["skills"] = sorted(known_terms)
-            item["unknown_skills"] = sorted((set(item["unknown_skills"]) | (set(terms) - known_terms)) - known_terms,
-                                             key=str.casefold)
             groq_assessed_clauses.add(clause)
-    resume_mentions = _resume_evidence(resume_text, requirements)
+    resume_mentions = _resume_evidence(resume_text)
     # Resolve explicit adjacent alternatives to one criterion; conjunctions remain separate.
     for item in requirements:
         mentions = extraction.extract_skill_mentions(item["text"], all_mentions=True, section_context="requirements")
@@ -231,25 +225,16 @@ def score(resume_text, jd_text, semantic_similarity, *, job_title="", as_of_date
         jd_mentions.extend(dict(item, line=0, section="job_title")
                            for item in extraction.extract_skill_mentions(job_title, all_mentions=True)
                            if item["skill"] in inferred_title_skills)
-    for requirement in requirements:
-        if requirement["priority"] not in {"must_have", "nice_to_have", "inferred_must_have"}:
-            continue
-        jd_mentions.extend({"skill": skill, "matched_text": skill, "match_type": "unknown",
-                            "section": "job_title" if requirement["line"] == 0 else "other",
-                            "line": requirement["line"], "evidence_credit": 0.4}
-                           for skill in requirement["unknown_skills"])
     if not isinstance(fuzzy_skill_pairs, (list, tuple)):
         raise ValueError("Fuzzy skill matches must be a list")
     jd_skill_set = {item["skill"] for item in jd_mentions}
     explicit_resume_skills = {item["skill"] for item in extraction.extract_skill_mentions(resume_text)}
-    resume_skill_phrases = extraction.extract_resume_skill_phrases(resume_text)
-    phrase_by_name = {extraction.normalize_text(item["phrase"]): item for item in resume_skill_phrases}
     for pair in fuzzy_skill_pairs:
         if (not isinstance(pair, dict) or set(pair) != {"jd_skill", "resume_skill", "cosine", "type"} or
                 pair.get("type") != "fuzzy" or not isinstance(pair.get("jd_skill"), str) or
                 pair.get("jd_skill") not in jd_skill_set or not isinstance(pair.get("resume_skill"), str) or
-                (pair.get("resume_skill") not in explicit_resume_skills and
-                 extraction.normalize_text(pair["resume_skill"]) not in phrase_by_name) or
+                pair.get("resume_skill") not in explicit_resume_skills or
+                pair.get("resume_skill") not in resume_mentions or
                 pair.get("jd_skill") in resume_mentions or
                 pair.get("resume_skill") == pair.get("jd_skill") or
                 (pair.get("jd_skill") in extraction.SKILLS and pair.get("resume_skill") in extraction.SKILLS and
@@ -257,40 +242,26 @@ def score(resume_text, jd_text, semantic_similarity, *, job_title="", as_of_date
                 type(pair.get("cosine")) not in (int, float) or not math.isfinite(pair["cosine"]) or
                 pair["cosine"] < extraction.FUZZY_SKILL_THRESHOLD or pair["cosine"] > 1):
             raise ValueError("Invalid or below-threshold fuzzy skill match")
-        if pair["resume_skill"] in resume_mentions:
-            source = resume_mentions[pair["resume_skill"]]
-            evidence = dict(source, matched_text=source["matched_text"])
-        else:
-            source = phrase_by_name[extraction.normalize_text(pair["resume_skill"])]
-            evidence = dict(source, matched_text=source["phrase"])
+        source = resume_mentions[pair["resume_skill"]]
+        evidence = dict(source, matched_text=source["matched_text"])
         resume_mentions[pair["jd_skill"]] = dict(evidence, skill=pair["jd_skill"], match_type="fuzzy",
                                                    fuzzy_from=pair["resume_skill"],
                                                    evidence_credit=min(evidence["evidence_credit"], 0.4))
     for item in requirements:
         if item["text"] not in groq_assessed_clauses:
             continue
-        if any(skill not in resume_mentions for skill in item["skills"] + item["unknown_skills"]):
+        if any(skill not in resume_mentions for skill in item["skills"]):
             assisted_needs_review.add(item["text"])
-            # A partially assessed clause must not dilute other skill evidence.
-            # Keep its detected matches visible, but score only original named
-            # technologies until the entire generated mapping is supported.
+            # An unsupported generated mapping stays outside skill denominators.
             item["skills"] = []
-            item["unknown_skills"] = [skill for skill in item["unknown_skills"]
-                                      if skill in original_assisted_unknowns[item["text"]]]
     must_skills = sorted({skill for item in requirements if item["priority"] == "must_have"
                           for skill in item["skills"]})
-    must_unknown_skills = sorted({skill for item in requirements if item["priority"] == "must_have"
-                                  for skill in item["unknown_skills"]}, key=str.casefold)
     inferred_skills = sorted({skill for item in requirements if item["priority"] == "inferred_must_have"
                               for skill in item["skills"]})
-    inferred_unknown_skills = sorted({skill for item in requirements if item["priority"] == "inferred_must_have"
-                                      for skill in item["unknown_skills"]}, key=str.casefold)
     nice_skills = sorted({skill for item in requirements if item["priority"] == "nice_to_have"
                           for skill in item["skills"]})
-    nice_unknown_skills = sorted({skill for item in requirements if item["priority"] == "nice_to_have"
-                                  for skill in item["unknown_skills"]}, key=str.casefold)
-    missing = [skill for skill in must_skills + must_unknown_skills if skill not in resume_mentions]
-    missing_inferred = [skill for skill in inferred_skills + inferred_unknown_skills if skill not in resume_mentions]
+    missing = [skill for skill in must_skills if skill not in resume_mentions]
+    missing_inferred = [skill for skill in inferred_skills if skill not in resume_mentions]
     jd_education = education_requirement_evidence(jd_text)
     resume_education = extraction.extract_education_evidence(resume_text)
     education_by_clause = {item["text"]: education_requirement_evidence(item["text"])
@@ -347,7 +318,7 @@ def score(resume_text, jd_text, semantic_similarity, *, job_title="", as_of_date
         experience_fit = _fraction(sum(ratios) / len(ratios))
     else:
         demonstrated = [resume_mentions[skill]["evidence_credit"]
-                        for skill in set(must_skills + must_unknown_skills + nice_skills + nice_unknown_skills)
+                        for skill in set(must_skills + nice_skills)
                         if skill in resume_mentions and (
                             resume_mentions[skill]["section"] in ("experience", "projects") or
                             (resume_mentions[skill]["section"] == "other" and
@@ -357,15 +328,14 @@ def score(resume_text, jd_text, semantic_similarity, *, job_title="", as_of_date
         experience_fit = _fraction(max([NEUTRAL_COMPONENT, *demonstrated]))
 
     components = {
-        "must_have": _coverage(must_skills + must_unknown_skills + inferred_skills + inferred_unknown_skills,
-                                resume_mentions, inferred=inferred_skills + inferred_unknown_skills),
-        "nice_to_have": _coverage(nice_skills + nice_unknown_skills, resume_mentions),
+        "must_have": _coverage(must_skills + inferred_skills, resume_mentions, inferred=inferred_skills),
+        "nice_to_have": _coverage(nice_skills, resume_mentions),
         "semantic": semantic_fit,
         "experience": experience_fit,
         "education_title": _education_title_fit(resume_text, jd_text, job_title),
     }
     weights = dict(WEIGHTS)
-    if not any(item["priority"] == "nice_to_have" for item in requirements):
+    if not nice_skills:
         # Redistribute absent optional criteria proportionally. Largest
         # remainders preserve integer display weights totaling exactly 100.
         weights["nice_to_have"] = 0
@@ -376,7 +346,7 @@ def score(resume_text, jd_text, semantic_similarity, *, job_title="", as_of_date
             weights[name] += 1
     component_points = {name: round(components[name] * maximum, 2) for name, maximum in weights.items()}
     raw_score = sum(component_points.values())
-    must_have_count = len(must_skills) + len(must_unknown_skills) + len(required_years) + len(education_requirements)
+    must_have_count = len(must_skills) + len(required_years) + len(education_requirements)
     missing_count = len(missing) + len(missing_year_requirements) + len(missing_education)
     missing_fraction = missing_count / must_have_count if must_have_count else 0.0
     jd_levels = extraction.extract_seniority(job_title)
@@ -399,7 +369,7 @@ def score(resume_text, jd_text, semantic_similarity, *, job_title="", as_of_date
         if item["priority"] == "must_have" and (
             item in missing_year_requirements or
             item in missing_education or
-            any(skill in missing for skill in item["skills"] + item["unknown_skills"]))
+            any(skill in missing for skill in item["skills"]))
     ]
     if seniority_gap:
         missing_requirements.append({"jd": job_title, "jd_line": 0, "reason": "seniority"})
@@ -413,7 +383,7 @@ def score(resume_text, jd_text, semantic_similarity, *, job_title="", as_of_date
     for item in assessed:
         clause = item["text"]
         criteria = []
-        for skill in item["skills"] + item["unknown_skills"]:
+        for skill in item["skills"]:
             mention = resume_mentions.get(skill)
             credit = mention["evidence_credit"] if mention else 0.0
             if item["priority"] == "inferred_must_have":
@@ -474,10 +444,10 @@ def score(resume_text, jd_text, semantic_similarity, *, job_title="", as_of_date
         "missing_inferred_skills": missing_inferred,
         "missing_must_have_requirements": missing_requirements,
         "must_have_skills": must_skills,
-        "must_have_unknown_skills": must_unknown_skills,
-        "inferred_must_have_skills": inferred_skills + inferred_unknown_skills,
+        "must_have_unknown_skills": [],
+        "inferred_must_have_skills": inferred_skills,
         "nice_to_have_skills": nice_skills,
-        "nice_to_have_unknown_skills": nice_unknown_skills,
+        "nice_to_have_unknown_skills": [],
         "experience_evidence": [
             {"jd": item["text"], "jd_line": item["line"], "required_years": item["minimum_years"],
              "observed_years": observed_years(item), "skills": item["skills"]}

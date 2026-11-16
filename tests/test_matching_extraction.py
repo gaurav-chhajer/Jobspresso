@@ -5,6 +5,47 @@ from backend import matching_extraction as extraction
 
 
 class MatchingExtractionTests(unittest.TestCase):
+    def test_catalog_boundary_requires_canonical_names_and_source_evidence(self):
+        text = 'Technical Skills: You must use Python and AcmeCloud software.'
+        result = extraction.validate_skill_candidates(text,
+            ['Python', 'SQL', 'You', 'Technical', 'Technical Skills', 'AcmeCloud', 'InventedCloud', text])
+        self.assertEqual([item['skill'] for item in result['accepted']], ['Python'])
+        self.assertEqual(result['accepted'][0]['matched_text'], 'Python')
+        self.assertEqual(result['review'], ['AcmeCloud'])
+        self.assertTrue({'SQL', 'You', 'Technical', 'Technical Skills', 'InventedCloud', text}.issubset(result['rejected']))
+        alias = extraction.validate_skill_candidates('Experience with JS required', ['JavaScript'])
+        self.assertEqual([item['skill'] for item in alias['accepted']], ['JavaScript'])
+
+    def test_catalog_boundary_rejects_malformed_candidates(self):
+        for source, candidates in (('', ['Python']), ('Python', 'Python'), ('Python', [None]),
+                                   ('Python', ['Python\nSQL']), ('Python', ['x' * 101])):
+            with self.subTest(source=source, candidates=candidates), self.assertRaises(ValueError):
+                extraction.validate_skill_candidates(source, candidates)
+
+    def test_inline_skill_headings_are_structure_and_preserve_priority(self):
+        for label in ('Technical Skills', 'Skills', 'Core competencies', 'Technologies'):
+            for section, priority in (('Requirements', 'must_have'), ('Bonus', 'nice_to_have')):
+                with self.subTest(label=label, section=section):
+                    item, = extraction.extract_jd_requirements(section + '\n' + label + ': Strong Python experience')
+                    self.assertEqual(item['skills'], ['Python'])
+                    self.assertEqual(item['unknown_skills'], [])
+                    self.assertEqual(item['priority'], priority)
+                    self.assertEqual(item['text'], 'Strong Python experience')
+                    self.assertEqual(item['line'], 2)
+        item, = extraction.extract_jd_requirements('Requirements\nTechnical Skills: AcmeCloud platform experience')
+        self.assertEqual(item['unknown_skills'], ['AcmeCloud'])
+
+    def test_sentence_pronouns_do_not_become_unknown_skills(self):
+        clause = ("You don't need to be a software engineer, but you should be comfortable using code to "
+                  "investigate data, perform statistical analysis, and evaluate or debug AI-assisted work.")
+        requirement, = extraction.extract_jd_requirements('Requirements\n' + clause)
+        self.assertEqual(requirement['unknown_skills'], [])
+        self.assertIn('Artificial intelligence', requirement['skills'])
+        for subject in ('You', 'Your', 'We', 'Our', 'They', 'Their', 'This', 'These'):
+            with self.subTest(subject=subject):
+                text = 'Requirements\n' + subject + ' use AcmeCloud software for development'
+                self.assertEqual(extraction.unknown_skill_candidates(text), ['AcmeCloud'])
+
     def test_bonus_is_optional_and_location_is_not_a_requirement(self):
         text = ("Requirements\nNative Android development with Kotlin and Jetpack Compose\n"
                 "Have designed and run A/B tests\nBonus\n"

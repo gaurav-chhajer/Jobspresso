@@ -1,4 +1,8 @@
-"""Bounded Groq assistance for prioritized JD clauses the local parser cannot map."""
+"""Untrusted Groq proposals for clauses the local parser cannot map.
+
+Response parsing validates transport shape only. The deterministic scorer applies
+the shared catalog and original-clause evidence boundary before using any label.
+"""
 
 import json
 import logging

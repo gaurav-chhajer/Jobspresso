@@ -26,7 +26,7 @@ TAXONOMY_VERSION = _TAXONOMY["taxonomy_version"]
 IMPLIES = {source: tuple(targets) for source, targets in _TAXONOMY["implies"].items()}
 BLOCKED_SKILL_PAIRS = frozenset(frozenset(pair) for pair in _TAXONOMY["blocked_pairs"])
 FUZZY_SKILL_THRESHOLD = 0.92
-PARSER_VERSION = "jd-requirements-v7"
+PARSER_VERSION = "jd-requirements-v9"
 
 
 _SECTION_NAMES = {
@@ -179,6 +179,10 @@ _UNKNOWN_STOPWORDS = {"and", "api", "bachelor", "bachelors", "ceo", "cto", "deve
 _UNKNOWN_STOPWORDS.update({"apply", "master", "masters", "computer", "science", "engineering", "education", "knowledge", "familiarity", "minimum", "additional", "proficient", "skills", "tools", "technologies", "what", "nice", "haves", "offer", "benefits", "perks", "compensation", "salary", "united", "states", "kingdom", "singapore", "practical", "specialization"})
 _UNKNOWN_STOPWORDS.update({"code", "context", "hands", "how", "jobgether", "protocol", "relations", "storage", "why", "cloud",
                           "care", "write", "enjoy", "build", "design", "develop", "own", "maintain"})
+# Sentence subjects are not technology names, even beside technical vocabulary.
+_UNKNOWN_STOPWORDS.update({"you", "your", "yours", "yourself", "yourselves", "we", "our", "ours", "ourselves",
+                          "they", "their", "theirs", "them", "themselves", "he", "his", "him", "himself",
+                          "she", "her", "hers", "herself", "it", "its", "itself", "this", "that", "these", "those"})
 _AMBIGUOUS_SKILLS = frozenset(("Go", "Excel", "REST", "React", "Spring", "Swift", "Room", "Sales", "Marketing",
                               "Infrastructure engineering"))
 _TECHNICAL_CONTEXT = re.compile(
@@ -305,25 +309,63 @@ def _ambiguous_skill_match_allowed(skill, alias, match, line, section):
     return bool(_TECHNICAL_CONTEXT.search(context))
 
 
-def _unknown_terms(line, *, requirement_context=False):
+_CATALOG_LABELS = tuple((normalize_text(alias), name)
+                        for name, aliases in SKILLS.items() for alias in (name, *aliases))
+
+
+def validate_skill_candidates(text, candidates):
+    """Only catalog labels with contextual source evidence may cross into scoring.
+
+    Unknown labels are review candidates, not qualifications or missing skills.
+    Accepted records retain the exact source evidence used by the local matcher.
+    """
+    if (not isinstance(text, str) or not text.strip() or len(text) > 250000 or
+            not isinstance(candidates, (list, tuple)) or len(candidates) > 1000 or
+            any(not isinstance(value, str) or not value.strip() or len(value) > 100
+                or any(ord(char) < 32 for char in value) for value in candidates)):
+        raise ValueError('Invalid skill candidates or source text')
+    source = extract_skill_mentions(text, all_mentions=True, section_context='requirements')
+    accepted, review, rejected = {}, set(), set()
+    for value in candidates:
+        normalized = normalize_text(value)
+        canonical = {name for alias, name in _CATALOG_LABELS if normalized == alias}
+        evidence = [mention for mention in source if mention['skill'] in canonical]
+        if evidence:
+            for mention in evidence:
+                accepted.setdefault(mention['skill'], mention)
+        elif canonical or normalized in _UNKNOWN_STOPWORDS or _section_header(value) is not None:
+            rejected.add(value)
+        elif any(not any(heading.start() <= match.start() < heading.end()
+                         for heading in _INLINE_JD_HEADING.finditer(text))
+                 for match in _skill_pattern(value).finditer(text)):
+            review.add(value)
+        else:
+            rejected.add(value)
+    return {'accepted': [accepted[name] for name in sorted(accepted)],
+            'review': sorted(review, key=str.casefold), 'rejected': sorted(rejected, key=str.casefold)}
+
+
+def _unknown_terms(line, *, requirement_context=False, skill_list_context=False):
     known = {normalize_text(alias) for aliases in SKILLS.values() for alias in aliases}
     candidates = set()
-    # Unknown proper nouns become scoreable skills only with nearby technical
+    # Unknown proper nouns become review candidates only with nearby technical
     # context. This keeps company names, financial acronyms, and URLs from
     # becoming hard gaps just because they occur on a required-qualification line.
     without_urls = _URL_PATTERN.sub(" ", line)
     if without_urls != line:
         return []
-    acronym_list = bool(re.match(r"\s*(?:skills|tools|technologies)\s*:", line, re.I))
+    acronym_list = skill_list_context or bool(re.match(r"\s*(?:skills|tools|technologies)\s*:", line, re.I))
     unknown_text = without_urls
     for _, _, pattern in _SKILL_PATTERNS:
         unknown_text = pattern.sub(lambda match: " " * len(match.group()), unknown_text)
     for match in _UNKNOWN_CANDIDATE.finditer(unknown_text):
         value = match.group().strip(".,;:()[]{}")
-        if (len(value) < 3 or (value.isupper() and not acronym_list) or value.casefold() in _UNKNOWN_STOPWORDS or
+        context = without_urls[max(0, match.start() - 36):min(len(without_urls), match.end() + 36)]
+        if (len(value) < 3 or (value.isupper() and not acronym_list and
+                              not _UNKNOWN_SKILL_CONTEXT.search(context)) or
+                value.casefold() in _UNKNOWN_STOPWORDS or
                 normalize_text(value) in known or value.isdecimal()):
             continue
-        context = without_urls[max(0, match.start() - 36):min(len(without_urls), match.end() + 36)]
         requirement_single_term = requirement_context and len(without_urls.split()) <= 2
         if (not acronym_list and not requirement_single_term and
                 not _UNKNOWN_SKILL_CONTEXT.search(context) and
@@ -390,7 +432,7 @@ def _year_value(value):
 
 _INLINE_JD_HEADING = re.compile(
     r"(?<!\w)(additional experience\s*\(not required\)|optional\s*(?:\(not required\))?|" + "|".join(re.escape(alias) for alias in sorted(
-        {alias for section in ("requirements", "nice_to_have", "responsibilities", "non_requirements")
+        {alias for section in ("requirements", "nice_to_have", "responsibilities", "non_requirements", "skills")
          for alias in _SECTION_NAMES[section]}, key=len, reverse=True)) +
     r")(?:\s*\((?:must[- ]?haves?|requirements?|required)\))?\s*:", re.I)
 
@@ -402,7 +444,8 @@ def _requirement_clauses(line, section):
         yield from _sentence_clauses(line[offset:heading.start()], section)
         label = re.sub(r"\s*\((?:must[- ]?haves?|requirements?|required)\)\s*$", "",
                        heading.group(1).casefold())
-        section = "nice_to_have" if "not required" in label or label.startswith("optional") else _HEADER_LOOKUP[label]
+        if label not in _SECTION_NAMES['skills']:
+            section = "nice_to_have" if "not required" in label or label.startswith("optional") else _HEADER_LOOKUP[label]
         offset = heading.end()
     yield from _sentence_clauses(line[offset:], section)
 
@@ -435,6 +478,7 @@ def extract_jd_requirements(text, *, job_title=""):
         for line_offset, line, clause_section in clauses:
             if clause_section == "non_requirements":
                 continue
+            source_line = section["text"].splitlines()[line_offset]
             content = line.strip(" \t-*•")
             if not content or _JD_BOILERPLATE.search(content) or _QUALIFICATION_INTRO.fullmatch(content):
                 continue
@@ -449,12 +493,13 @@ def extract_jd_requirements(text, *, job_title=""):
                 "priority": priority,
                 "skills": [mention["skill"] for mention in mentions],
                 "unknown_skills": _unknown_terms(
-                    content, requirement_context=clause_section in {"requirements", "nice_to_have"})
+                    content, requirement_context=clause_section in {"requirements", "nice_to_have"},
+                    skill_list_context=bool(re.match(r"\s*(?:skills|tools|technologies)\s*:", source_line, re.I)))
                     if priority != "unclassified" else [],
                 "minimum_years": years,
             })
     cued_skills = {skill for item in requirements if item["priority"] in {"must_have", "nice_to_have"}
-                   for skill in item["skills"] + item["unknown_skills"]}
+                   for skill in item["skills"]}
     if not cued_skills:
         inferred = {skill for item in requirements if item["priority"] == "unclassified"
                     for skill in item["skills"] + _unknown_terms(item["text"])}
@@ -474,6 +519,9 @@ def extract_jd_requirements(text, *, job_title=""):
             inferred.add(unknown)
             requirements.append({"text": job_title.strip(), "line": 0, "priority": "inferred_must_have",
                                  "skills": [], "unknown_skills": [unknown], "minimum_years": None})
+    for item in requirements:
+        item['skills'] = [mention['skill'] for mention in
+                          validate_skill_candidates(item['text'], item['skills'])['accepted']]
     return requirements
 
 

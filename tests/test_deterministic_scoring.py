@@ -5,6 +5,34 @@ from backend import deterministic_scoring as scoring
 
 
 class DeterministicScoringTests(unittest.TestCase):
+    def test_unreviewed_terms_cannot_change_skill_points_or_create_gaps(self):
+        resume = 'Experience\nBuilt production Python services.'
+        baseline = scoring.score(resume, 'Requirements\nPython required', 0.6, as_of_date=date(2026, 11, 16))
+        for extra in ('Requirements\nAcmeCloud platform required', 'Bonus\nAcmeCloud platform experience'):
+            result = scoring.score(resume, 'Requirements\nPython required\n' + extra, 0.6,
+                                   as_of_date=date(2026, 11, 16))
+            self.assertEqual(result['component_points'], baseline['component_points'])
+            self.assertEqual(result['missing_must_have'], [])
+            self.assertIn('AcmeCloud platform', result['requirement_coverage']['needs_review'][0])
+            self.assertTrue(all(item['skill'] in scoring.extraction.SKILLS for item in result['matched'] if item.get('skill')))
+
+    def test_model_cannot_invent_a_catalog_skill_absent_from_the_clause(self):
+        clause = 'Comfortable with ambiguity'
+        result = scoring.score('Experience\nBuilt Python services', 'Requirements\n' + clause, 0.6,
+            as_of_date=date(2026, 11, 16), requirement_assessments={clause: ['Python']})
+        self.assertEqual(result['must_have_skills'], [])
+        self.assertEqual(result['matched'], [])
+        self.assertIn(clause, result['requirement_coverage']['needs_review'])
+
+    def test_pronoun_noise_does_not_create_a_missing_skill_or_clause_gap(self):
+        clause = ("You don't need to be a software engineer, but you should be comfortable using code to "
+                  "investigate data, perform statistical analysis, and evaluate or debug AI-assisted work.")
+        resume = 'Skills\nArtificial intelligence, Python, SQL\nExperience\nBuilt Python services for data analysis.'
+        result = scoring.score(resume, 'Requirements\n' + clause, 0.6, as_of_date=date(2026, 11, 16))
+        self.assertNotIn('You', result['must_have_unknown_skills'])
+        self.assertEqual(result['missing_must_have'], [])
+        self.assertEqual(result['missing_must_have_requirements'], [])
+
     def test_unsupported_assisted_phrases_do_not_become_missing_skills(self):
         resume = "Experience\nShipped Android features using Kotlin.\nSkills\nJetpack Compose"
         ambiguity = "Comfortable with ambiguity and fast-changing priorities, and able to add structure"
@@ -19,11 +47,11 @@ class DeterministicScoringTests(unittest.TestCase):
         self.assertEqual(assisted["missing_must_have"], ["A/B testing"])
         self.assertEqual(assisted["requirement_coverage"]["needs_review"], [ambiguity, performance])
 
-    def test_assistance_preserves_explicit_unknown_technology_gaps(self):
+    def test_assistance_keeps_unreviewed_technologies_out_of_gaps(self):
         clause = "AcmeCloud platform experience required"
         result = scoring.score("Experience\nBuilt Python services", "Requirements\n" + clause, 0.7,
             as_of_date=date(2026, 11, 16), requirement_assessments={clause: ["Cloud architecture"]})
-        self.assertEqual(result["missing_must_have"], ["AcmeCloud"])
+        self.assertEqual(result["missing_must_have"], [])
         self.assertNotIn("Cloud architecture", result["must_have_unknown_skills"])
         self.assertIn(clause, result["requirement_coverage"]["needs_review"])
 
@@ -32,7 +60,7 @@ class DeterministicScoringTests(unittest.TestCase):
         result = scoring.score("Experience\nIdentity platform development", "Requirements\n" + clause, 0.5,
             as_of_date=date(2026, 11, 16),
             requirement_assessments={clause: ["identity platform development", "Ambiguity"]})
-        self.assertIn("identity platform development", {item.get("skill") for item in result["matched"]})
+        self.assertNotIn("identity platform development", {item.get("skill") for item in result["matched"]})
         self.assertEqual(result["missing_must_have"], [])
         self.assertEqual(result["requirement_coverage"]["recognized"], 0)
         self.assertEqual(result["requirement_coverage"]["needs_review"], [clause])
@@ -48,15 +76,13 @@ class DeterministicScoringTests(unittest.TestCase):
         self.assertEqual(assisted["components"], baseline["components"])
         self.assertEqual(assisted["requirement_coverage"]["needs_review"], [clause])
 
-    def test_assisted_fuzzy_evidence_is_resolved_before_filtering_terms(self):
+    def test_unreviewed_assisted_fuzzy_evidence_is_rejected(self):
         clause = "Experience building identity platforms"
         term = "identity platform development"
-        result = scoring.score("Skills\nIdentity systems", "Requirements\n" + clause, 0.5,
-            as_of_date=date(2026, 11, 16), requirement_assessments={clause: [term]},
-            fuzzy_skill_pairs=[{"jd_skill": term, "resume_skill": "Identity systems", "cosine": 0.95, "type": "fuzzy"}])
-        self.assertEqual(result["missing_must_have"], [])
-        self.assertEqual(result["matched"][0]["type"], "fuzzy")
-        self.assertEqual(result["requirement_coverage"]["recognized"], 1)
+        with self.assertRaisesRegex(ValueError, 'Invalid or below-threshold'):
+            scoring.score("Skills\nIdentity systems", "Requirements\n" + clause, 0.5,
+                as_of_date=date(2026, 11, 16), requirement_assessments={clause: [term]},
+                fuzzy_skill_pairs=[{"jd_skill": term, "resume_skill": "Identity systems", "cosine": 0.95, "type": "fuzzy"}])
 
     def test_android_bonus_is_lower_weight_and_location_cannot_change_fit(self):
         resume = ("Experience\nShipped Android features using Kotlin and CI/CD pipelines.\n"
@@ -158,7 +184,7 @@ class DeterministicScoringTests(unittest.TestCase):
         self.assertEqual(result["score"], 88)
         self.assertEqual(result["components"]["must_have"], 1.0)
         self.assertEqual(result["matched"][0]["type"], "exact")
-        self.assertEqual(result["scorer_version"], "deterministic-v9")
+        self.assertEqual(result["scorer_version"], "deterministic-v10")
 
     def test_cache_version_changes_daily_only_for_current_experience(self):
         static_resume = "Experience\nPython developer | Jan 2020 - Dec 2022"
@@ -337,21 +363,20 @@ class DeterministicScoringTests(unittest.TestCase):
                           fuzzy_skill_pairs=[{"jd_skill": "JavaScript", "resume_skill": "Java",
                                               "cosine": 0.99, "type": "fuzzy"}])
 
-    def test_unknown_jd_skill_can_match_a_raw_resume_skill_phrase(self):
-        result = scoring.score(
-            "Skills\nAcme Cloud Platform", "Requirements\nAcmeCloud platform required", 0.6,
-            as_of_date=date(2026, 11, 11),
-            fuzzy_skill_pairs=[{"jd_skill": "AcmeCloud", "resume_skill": "Acme Cloud Platform",
-                                "cosine": 0.95, "type": "fuzzy"}],
-        )
-        self.assertEqual(result["missing_must_have"], [])
-        self.assertEqual(result["matched"][0]["type"], "fuzzy")
-        self.assertEqual(result["matched"][0]["resume"], "Acme Cloud Platform")
+    def test_unknown_jd_skill_cannot_bypass_review_with_a_fuzzy_match(self):
+        with self.assertRaisesRegex(ValueError, 'Invalid or below-threshold'):
+            scoring.score(
+                "Skills\nAcme Cloud Platform", "Requirements\nAcmeCloud platform required", 0.6,
+                as_of_date=date(2026, 11, 11),
+                fuzzy_skill_pairs=[{"jd_skill": "AcmeCloud", "resume_skill": "Acme Cloud Platform",
+                                    "cosine": 0.95, "type": "fuzzy"}],
+            )
 
     def test_unknown_must_have_without_resume_evidence_is_reported(self):
         result = scoring.score("Skills\nPython", "Requirements\nAcmeCloud platform required", 0.8,
                                as_of_date=date(2026, 11, 11))
-        self.assertEqual(result["missing_must_have"], ["AcmeCloud"])
+        self.assertEqual(result["missing_must_have"], [])
+        self.assertIn('AcmeCloud platform required', result['requirement_coverage']['needs_review'])
 
     def test_invalid_inputs_and_cosine_fail_closed(self):
         base = ("Python resume", "Python required", 0.5)

@@ -69,6 +69,20 @@ class CloudEndpointTests(unittest.TestCase):
         self.assertEqual(self.conn.execute(
             "SELECT status FROM matching_tasks WHERE user_id=1").fetchone()[0], "pending")
 
+    def test_rescore_deterministic_marks_active_saved_scores_stale_and_queues_users(self):
+        self.conn.execute("UPDATE scores SET is_stale=0")
+        self.conn.commit()
+
+        response = self.call("rescore-deterministic", {})
+
+        self.assertEqual(response.status_code, 200, response.json)
+        self.assertEqual(response.json["staled"], 2)
+        self.assertEqual(response.json["users_queued"], 1)
+        self.assertEqual(self.conn.execute(
+            "SELECT COUNT(*) FROM scores WHERE user_id=1 AND is_stale=1").fetchone()[0], 2)
+        self.assertEqual(self.conn.execute(
+            "SELECT status FROM matching_tasks WHERE user_id=1").fetchone()[0], "pending")
+
     def test_onboarding_reminder_is_due_once_for_incomplete_resume(self):
         self.conn.execute("UPDATE users SET resume_text='' WHERE id=1")
         self.conn.commit()
@@ -282,8 +296,9 @@ class CloudEndpointTests(unittest.TestCase):
             as_of_date=datetime(2026, 11, 13, tzinfo=timezone.utc).date(),
             requirement_assessments={
                 "Experience building Login-as-a-Service platforms": ["identity platform development"]})
-        self.assertEqual(result["requirement_coverage"]["recognized"], 1)
-        self.assertEqual(result["requirement_coverage"]["needs_review"], [])
+        self.assertEqual(result["requirement_coverage"]["recognized"], 0)
+        self.assertEqual(result["requirement_coverage"]["needs_review"],
+                         ['Experience building Login-as-a-Service platforms'])
         self.assertEqual(result["missing_must_have"], [])
 
     def test_groq_assessor_rejects_unknown_clause_ids_and_bad_terms(self):

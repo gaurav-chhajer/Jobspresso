@@ -7,12 +7,12 @@ from backend import pipeline_skeleton
 
 
 class DeterministicPipelineTests(unittest.TestCase):
-    def test_redundant_unknown_and_implied_fuzzy_proposals_are_filtered(self):
+    def test_unknown_fuzzy_proposals_reach_strict_validation_and_implied_are_filtered(self):
         from backend import deterministic_scoring
         pairs = [dict(jd_skill="Scrum", resume_skill="SCRUM", cosine=1.0, type="fuzzy"),
                  dict(jd_skill="Python", resume_skill="Flask", cosine=.95, type="fuzzy")]
         self.assertEqual(deterministic_scoring.pending_fuzzy_matches(
-            "Skills\nSCRUM, Flask", "Requirements\nScrum\nPython", pairs), [])
+            "Skills\nSCRUM, Flask", "Requirements\nScrum\nPython", pairs), [pairs[0]])
         invalid = [dict(pairs[0], cosine=.5)]
         self.assertEqual(deterministic_scoring.pending_fuzzy_matches(
             "Skills\nSCRUM", "Requirements\nScrum", invalid), invalid)
@@ -33,7 +33,7 @@ class DeterministicPipelineTests(unittest.TestCase):
         self.assertEqual(result["fit_score"], 57)
         self.assertIn("Python", result["matched_skills"])
         self.assertEqual(result["missing_requirements"], [])
-        self.assertEqual(result["scorer_version"], "deterministic-v9")
+        self.assertEqual(result["scorer_version"], "deterministic-v10")
         semantic.assert_called_once()
 
 

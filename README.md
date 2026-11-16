@@ -94,18 +94,21 @@ The current `skills-v6-esco-1.2.0` taxonomy preserves the curated project skills
 and directional implications, with a small reviewed set of exact English aliases
 from ESCO. Broader ESCO terms were not enabled as automatic matches because that
 would add ambiguous and overly general requirements without human validation.
-The deterministic-v9 scorer also recognizes explicit developer-tooling,
+The deterministic-v10 scorer also recognizes explicit developer-tooling,
 infrastructure, workflow-automation, AI, and software-lifecycle capabilities.
 CI/CD supplies partial transferable evidence for developer tooling, automation,
 and lifecycle work; it does not prove coding-agent, monorepo, or cloud-development
 environment experience. GitHub Actions counts as CI/CD only with build/deployment
-context. Sentence verbs are excluded from unknown skills, and unassessed clauses
+context. Sentence verbs and ordinary pronouns (such as "You" and "Your") are
+excluded from unknown skills, even beside technical vocabulary. Inline skill
+headings are treated as structure, preserving required versus optional context.
+Skill chips list named gaps; unmet requirement sentences appear in clause evidence. Unassessed clauses
 remain listed for manual review. Qualification introductions are not scored.
 Each score also reports clause-level evidence as supported, partial, no evidence
 detected, or manual review, with the resume text that triggered each detected
 match. Parser coverage counts clauses the parser mapped; it does not indicate
 how strongly the resume supports those clauses.
-When a posting has no optional requirements, weights-v2 gives that component zero
+When a posting has no validated optional skills, weights-v2 gives that component zero
 weight and redistributes its weight proportionally across the other components
 (44/0/28/17/11); postings with optional requirements retain 40/10/25/15/10.
 Returned component weights and points describe the calculation for that posting.
@@ -119,13 +122,22 @@ establish playback or streaming experience. Build, test and release pipelines
 are recognized as CI/CD evidence. These parser changes are versioned separately.
 These rules invalidate previous scoring caches but do not overwrite saved scores
 or establish human calibration of the resulting number.
-Groq-generated competency labels require resume evidence before they enter the
-skill components. Unmatched generated phrases do not become missing skills or
-trigger hard caps; their source clauses remain in manual review. Named technology
-requirements extracted directly from the posting retain their missing-skill
-checks. Exact, implied, and validated fuzzy evidence is resolved before applying
-this rule. Partially supported assisted clauses remain flagged for review and
-do not change skill-component denominators; their detected matches remain visible.
+`matching_extraction.validate_skill_candidates` is the shared skill boundary:
+accepted labels must resolve to the reviewed catalog and have contextual alias
+evidence in the original JD clause. Accepted records retain their source text and
+line. Parser results and model suggestions pass through the same boundary.
+Unknown technologies remain in the existing unmatched-term review workflow and
+their clauses stay visible for manual review. They do not enter skill denominators,
+missing-skill lists, hard caps, or raw resume-phrase matching. Reviewed aliases can
+be added to the versioned taxonomy after human validation. Model labels cannot
+invent catalog skills absent from the clause. Fuzzy scoring uses recognized
+catalog skills only; unknown-label similarity proposals are review-only. This
+policy applies to saved-job scoring, the scoring API, and public-dataset evaluation.
+The parser/scorer versions invalidate old caches; existing saved scores still
+require an explicit refresh after deployment. The authenticated
+`/internal/worker/rescore-deterministic` operation marks active saved scores stale
+in bounded batches and queues their users for the deterministic worker. Numeric
+response fields are retained.
 This service uses the ESCO classification of the European Commission. The
 Jobspresso taxonomy is an adapted version of selected ESCO labels.
 

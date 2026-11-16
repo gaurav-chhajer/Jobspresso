@@ -426,6 +426,34 @@ def register_routes(application, connection, database):
         return {"staled": affected, "users_queued": len(affected_users),
                 "batch_limit": MAX_RESCORE_ITEMS}
 
+    @routes.post("/rescore-deterministic")
+    def rescore_deterministic():
+        """Queue a bounded batch of active saved scores for the current scorer."""
+        if body():
+            raise ValueError("Rescore request must be empty")
+        conn = connection()
+        with run_pipeline.exclusive_cycle(Path(database).parent / "pipeline.lock"), conn:
+            conn.execute("BEGIN IMMEDIATE")
+            rows = conn.execute("""SELECT s.user_id,s.job_id FROM scores s
+                JOIN jobs j ON j.id=s.job_id JOIN companies c ON c.id=j.company_id
+                JOIN users u ON u.id=s.user_id JOIN accounts a ON a.user_id=u.id
+                WHERE s.is_stale=0 AND j.is_active=1 AND c.active=1
+                    AND u.active=1 AND a.email_verified=1 AND trim(u.resume_text)<>''
+                ORDER BY s.user_id,s.job_id LIMIT ?""", (MAX_RESCORE_ITEMS,)).fetchall()
+            affected_users = set()
+            affected = 0
+            for row in rows:
+                cursor = conn.execute("""UPDATE scores SET is_stale=1
+                    WHERE user_id=? AND job_id=? AND is_stale=0""", (row["user_id"], row["job_id"]))
+                if cursor.rowcount:
+                    affected += 1
+                    affected_users.add(row["user_id"])
+            queued_at = datetime.now(timezone.utc)
+            for user_id in sorted(affected_users):
+                matching_tasks.enqueue(conn, user_id, "backlog", queued_at)
+        return {"staled": affected, "users_queued": len(affected_users),
+                "batch_limit": MAX_RESCORE_ITEMS}
+
     @routes.post("/role-titles")
     def save_role_titles():
         data = body()

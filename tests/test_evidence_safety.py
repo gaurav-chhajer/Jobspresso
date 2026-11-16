@@ -46,8 +46,8 @@ class EvidenceSafetyTests(unittest.TestCase):
     def test_unknown_labels_are_visible_and_require_review(self):
         absent = self.score("Skills\nPython", "Requirements\nSalesforce\nApex")
         present = self.score("Skills\nSalesforce, Apex", "Requirements\nSalesforce\nApex")
-        self.assertEqual(set(absent["missing_must_have"]), {"Salesforce", "Apex"})
-        self.assertLess(absent["score"], present["score"])
+        self.assertEqual(absent["missing_must_have"], [])
+        self.assertEqual(absent["score"], present["score"])
         self.assertTrue(absent["requirement_coverage"]["needs_review"])
 
     def test_normalized_aliases_and_units(self):
