@@ -5,6 +5,96 @@ from backend import deterministic_scoring as scoring
 
 
 class DeterministicScoringTests(unittest.TestCase):
+    def test_android_bonus_is_lower_weight_and_location_cannot_change_fit(self):
+        resume = ("Experience\nShipped Android features using Kotlin and CI/CD pipelines.\n"
+                  "Skills\nJetpack Compose\nProjects\nBuilt an Azure Speech-to-Text prototype.")
+        jd = ("Requirements\nStrong native Android development (Kotlin, Jetpack Compose)\n"
+              "Have designed and run A/B tests\nBonus\n"
+              "Experience with audio playback or streaming on Android\n"
+              "Experience building mobile infrastructure for build, test and release pipelines")
+        result = scoring.score(resume, jd, 0.6, job_title="Android Engineer", as_of_date=date(2026, 11, 16))
+        located = scoring.score(resume, jd + "\nLocation\nThis role is remote-first, GMT+4 preferred.\n"
+                                "Senior Python engineers in our London office. Master's degree in Engineering required.\n#LI-Remote",
+                                0.6, job_title="Android Engineer", as_of_date=date(2026, 11, 16))
+        for key in ("score", "components", "component_points", "requirement_coverage", "missing_must_have"):
+            self.assertEqual(located[key], result[key], key)
+        self.assertEqual(result["weights"]["nice_to_have"], 10)
+        self.assertEqual(result["weights"]["must_have"], 40)
+        self.assertIn("A/B testing", result["missing_must_have"])
+        self.assertNotIn("Infrastructure engineering", result["missing_must_have"])
+        self.assertNotIn("Audio playback", {item.get("skill") for item in result["matched"]})
+        self.assertNotIn("Audio streaming", {item.get("skill") for item in result["matched"]})
+        self.assertEqual(result["requirement_coverage"]["total"], 4)
+
+    def test_capability_evidence_matches_without_inventing_agent_experience(self):
+        jd = ("What We\u2019re Looking For\n"
+              "Have experience building developer tooling, infrastructure, or internal platforms\n"
+              "Care deeply about developer experience and engineering productivity\n"
+              "Enjoy designing systems that automate complex workflows\n"
+              "Are excited about how AI will transform the software development lifecycle\n"
+              "Write clean, maintainable code and enjoy owning systems end-to-end\n"
+              "Why This Role Is Unique\nSoftware engineering is changing quickly.")
+        resume = ("Experience\nShipped features using CI/CD pipelines for automated builds and release verification.\n"
+                  "Projects\nBuilt services deployed via GitHub Actions with 590 offline tests.\n"
+                  "Technical skills\nGenerative AI, Python\nEducation\nB.Tech Computer Science")
+        result = scoring.score(resume, jd, 0.4724, as_of_date=date(2026, 11, 16))
+        self.assertNotIn("Care", result["missing_must_have"])
+        self.assertNotIn("Write", result["missing_must_have"])
+        self.assertIn("Workflow automation", {item.get("skill") for item in result["matched"]})
+        self.assertIn("Developer tooling", {item.get("skill") for item in result["matched"]})
+        self.assertGreater(result["requirement_coverage"]["recognized"], 0)
+        self.assertTrue(result["requirement_coverage"]["needs_review"])
+        self.assertEqual(result["missing_must_have"], [])
+        unrelated = scoring.score("Experience\nServed restaurant customers.", jd, 0.4724,
+                                  as_of_date=date(2026, 11, 16))
+        self.assertGreater(result["score"], unrelated["score"])
+        agents = scoring.score(resume, "Requirements\nExperience building coding agents", 0.4724,
+                               as_of_date=date(2026, 11, 16))
+        self.assertIn("Coding agents", agents["missing_must_have"])
+
+    def test_absent_optional_requirements_have_zero_weight_not_low_credit(self):
+        result = scoring.score("Projects\nBuilt Python services", "Requirements\nPython", 0.5,
+                               as_of_date=date(2026, 11, 16))
+        self.assertEqual(result["weights"]["nice_to_have"], 0)
+        self.assertEqual(result["component_points"]["nice_to_have"], 0)
+        self.assertEqual(sum(result["weights"].values()), 100)
+        self.assertEqual(result["raw_score"], sum(result["component_points"].values()))
+        optional = scoring.score("Projects\nBuilt Python services",
+                                 "Requirements\nPython\nPreferred\nDocker", 0.5,
+                                 as_of_date=date(2026, 11, 16))
+        self.assertEqual(optional["weights"]["nice_to_have"], 10)
+        self.assertEqual(optional["components"]["nice_to_have"], 0)
+
+    def test_major_investment_is_not_an_education_requirement(self):
+        self.assertEqual(scoring.education_requirement_evidence(
+            "That requires a major investment in developer experience and engineering infrastructure."), [])
+        self.assertTrue(scoring.education_requirement_evidence("A major in computer science is required"))
+
+    def test_comma_or_capabilities_form_one_requirement_but_and_remains_separate(self):
+        resume = "Experience\nBuilt internal platforms."
+        alternative = scoring.score(resume,
+            "Requirements\nExperience with developer tooling, infrastructure, or internal platforms", 0.5,
+            as_of_date=date(2026, 11, 16))
+        self.assertEqual(alternative["must_have_skills"], ["Internal platforms"])
+        self.assertEqual(alternative["components"]["must_have"], 1)
+        conjunction = scoring.score(resume,
+            "Requirements\nExperience with developer tooling and internal platforms", 0.5,
+            as_of_date=date(2026, 11, 16))
+        self.assertIn("Developer tooling", conjunction["missing_must_have"])
+
+    def test_need_to_bring_requirements_use_evidence_and_report_unassessed_clauses(self):
+        result = scoring.score(
+            "Projects\nBuilt CI/CD pipelines.",
+            "SKILLS YOU'LL NEED TO BRING\nExperience building CI/CD pipelines.\n"
+            "Strong collaboration and communication skills.",
+            0.5, as_of_date=date(2026, 11, 11))
+        self.assertEqual(result["must_have_skills"], ["CI/CD"])
+        self.assertEqual(result["components"]["must_have"], 1.0)
+        self.assertEqual(result["requirement_coverage"]["total"], 2)
+        self.assertEqual(result["requirement_coverage"]["recognized"], 1)
+        self.assertEqual(result["requirement_coverage"]["needs_review"],
+                         ["Strong collaboration and communication skills."])
+
     def test_weights_and_result_are_deterministic_and_structured(self):
         resume = "Skills\nPython\nProjects\nBachelors degree; Python APIs"
         jd = "Requirements\nPython required\nBachelor's degree required"
@@ -12,10 +102,10 @@ class DeterministicScoringTests(unittest.TestCase):
         self.assertEqual(sum(scoring.WEIGHTS.values()), 100)
         self.assertEqual(result, scoring.score(resume, jd, 0.8, job_title="Software Engineer",
                                                as_of_date=date(2026, 11, 11)))
-        self.assertEqual(result["score"], 84)
+        self.assertEqual(result["score"], 88)
         self.assertEqual(result["components"]["must_have"], 1.0)
         self.assertEqual(result["matched"][0]["type"], "exact")
-        self.assertEqual(result["scorer_version"], "deterministic-v5")
+        self.assertEqual(result["scorer_version"], "deterministic-v6")
 
     def test_cache_version_changes_daily_only_for_current_experience(self):
         static_resume = "Experience\nPython developer | Jan 2020 - Dec 2022"

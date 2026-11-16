@@ -1,5 +1,5 @@
 {
-  "taxonomy_version": "skills-v4-esco-1.2.0",
+  "taxonomy_version": "skills-v6-esco-1.2.0",
   "source": "Curated Jobspresso taxonomy with selected exact English alternate labels adapted from ESCO v1.2.0",
   "skills": {
     "Python": [
@@ -186,7 +186,9 @@
       "ci/cd",
       "continuous integration",
       "continuous delivery",
-      "continuous deployment"
+      "continuous deployment",
+      "build, test and release pipelines",
+      "build, test, and release pipelines"
     ],
     "Large language models": [
       "llm",
@@ -245,6 +247,61 @@
     "Terraform": [
       "terraform",
       "hashicorp terraform"
+    ],
+    "Developer tooling": [
+      "developer tooling",
+      "developer tools",
+      "developer toolchains"
+    ],
+    "Infrastructure engineering": [
+      "infrastructure engineering",
+      "engineering infrastructure",
+      "developer infrastructure",
+      "infrastructure"
+    ],
+    "Internal platforms": [
+      "internal platforms",
+      "internal platform"
+    ],
+    "Workflow automation": [
+      "workflow automation",
+      "automate complex workflows",
+      "automated workflows",
+      "automated builds"
+    ],
+    "Software development lifecycle": [
+      "software development lifecycle",
+      "software development life cycle",
+      "sdlc"
+    ],
+    "Artificial intelligence": [
+      "artificial intelligence",
+      "AI"
+    ],
+    "Coding agents": [
+      "coding agents",
+      "coding agent",
+      "agent execution systems"
+    ],
+    "Monorepo tooling": [
+      "monorepo",
+      "monorepos"
+    ],
+    "A/B testing": [
+      "a/b testing",
+      "a/b tests"
+    ],
+    "Audio playback": [
+      "audio playback"
+    ],
+    "Audio streaming": [
+      "audio streaming"
+    ],
+    "Cloud development environments": [
+      "cloud dev environment",
+      "cloud dev environments",
+      "cloud development environment",
+      "cloud development environments"
     ]
   },
   "implies": {
@@ -278,6 +335,17 @@
     "Jetpack Compose": [
       "Kotlin",
       "Android"
+    ],
+    "CI/CD": [
+      "Developer tooling",
+      "Workflow automation",
+      "Software development lifecycle"
+    ],
+    "Generative AI": [
+      "Artificial intelligence"
+    ],
+    "Machine learning": [
+      "Artificial intelligence"
     ]
   },
   "blocked_pairs": [

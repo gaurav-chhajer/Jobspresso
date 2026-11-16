@@ -48,7 +48,7 @@ def section_similarity(resume_text, jd_text, scorer, *, resume_owner, jd_owner):
 
     weighted_scores = []
     for index, section in enumerate(jd_sections):
-        if not section["text"].strip():
+        if section["name"] == "non_requirements" or not section["text"].strip():
             continue
         owner = f"{jd_owner}:section:{index}:{section['name']}"
         jd_vector, _ = scorer.embedding(section["text"], owner)

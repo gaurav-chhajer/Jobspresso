@@ -86,10 +86,31 @@ repeatable `--ablation NAME=PATH` options; each variant reports the same error,
 rank, and 60-point cutoff metrics. Review recurring unknown JD terms weekly with
 `python -B -m scripts.review_unmatched_skills`; approve aliases by editing the
 versioned taxonomy at `backend/taxonomy/skills.json` and rerun the evaluator.
-The current `skills-v3-esco-1.2.0` taxonomy preserves the curated project skills
+The current `skills-v6-esco-1.2.0` taxonomy preserves the curated project skills
 and directional implications, with a small reviewed set of exact English aliases
 from ESCO. Broader ESCO terms were not enabled as automatic matches because that
 would add ambiguous and overly general requirements without human validation.
+The deterministic-v6 scorer also recognizes explicit developer-tooling,
+infrastructure, workflow-automation, AI, and software-lifecycle capabilities.
+CI/CD supplies partial transferable evidence for developer tooling, automation,
+and lifecycle work; it does not prove coding-agent, monorepo, or cloud-development
+environment experience. GitHub Actions counts as CI/CD only with build/deployment
+context. Sentence verbs are excluded from unknown skills, and unassessed clauses
+remain listed for manual review. Qualification introductions are not scored.
+When a posting has no optional requirements, weights-v2 gives that component zero
+weight and redistributes its weight proportionally across the other components
+(44/0/28/17/11); postings with optional requirements retain 40/10/25/15/10.
+Returned component weights and points describe the calculation for that posting.
+`Bonus` headings introduce optional skills, retaining their lower 10-point weight
+against 40 points for required skills. Location/remote sections and ATS tags such
+as `#LI-Remote` are excluded from requirement coverage and skill evidence; location
+and benefits sections are also excluded from semantic similarity. Location text
+does not supply education or seniority requirements. A/B testing and audio
+playback/streaming are explicit capabilities; speech recognition alone does not
+establish playback or streaming experience. Build, test and release pipelines
+are recognized as CI/CD evidence. These parser changes are versioned separately.
+These rules invalidate previous scoring caches but do not overwrite saved scores
+or establish human calibration of the resulting number.
 This service uses the ESCO classification of the European Commission. The
 Jobspresso taxonomy is an adapted version of selected ESCO labels.
 

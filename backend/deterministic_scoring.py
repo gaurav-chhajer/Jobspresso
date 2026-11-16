@@ -9,8 +9,8 @@ from datetime import date
 from backend import matching_extraction as extraction
 
 
-SCORER_VERSION = "deterministic-v5"
-WEIGHTS_VERSION = "weights-v1"
+SCORER_VERSION = "deterministic-v6"
+WEIGHTS_VERSION = "weights-v2"
 WEIGHTS = {
     "must_have": 40,
     "nice_to_have": 10,
@@ -26,7 +26,7 @@ _DEGREE_LEVEL = {"diploma": 1, "bachelors": 2, "masters": 3, "doctorate": 4}
 _SENIORITY_LEVEL = {"intern": 0, "entry": 1, "mid": 2, "senior": 3, "lead": 4, "management": 5}
 _EDUCATION_REQUIREMENT_CUE = re.compile(
     r"\b(?:degree|education(?:al)?|bachelor(?:'s)?|master(?:'s)?|ph\.?d\.?|doctorate|"
-    r"diploma|graduate|undergraduate|postgraduate|major|field of study)\b", re.I)
+    r"diploma|graduate|undergraduate|postgraduate|major\s+in|field of study)\b", re.I)
 
 
 def _fraction(value):
@@ -199,12 +199,16 @@ def score(resume_text, jd_text, semantic_similarity, *, job_title="", as_of_date
         spans.sort()
         groups = []
         for start, end, skill in spans:
-            if groups and re.fullmatch(r"\s*(?:,?\s*or)\s*", item["text"][groups[-1][-1][1]:start], re.I):
+            if groups and re.fullmatch(r"\s*(?:,|,?\s*or)\s*", item["text"][groups[-1][-1][1]:start], re.I):
                 groups[-1].append((start, end, skill))
             else:
                 groups.append([(start, end, skill)])
         for group in groups:
             if len(group) < 2:
+                continue
+            # A comma list is an alternative only when it contains "or".
+            if not any(re.search(r"\bor\b", item["text"][left[1]:right[0]], re.I)
+                       for left, right in zip(group, group[1:])):
                 continue
             options = [entry[2] for entry in group]
             selected = max(options, key=lambda skill: resume_mentions.get(skill, {}).get("evidence_credit", 0))
@@ -322,7 +326,10 @@ def score(resume_text, jd_text, semantic_similarity, *, job_title="", as_of_date
     else:
         demonstrated = [resume_mentions[skill]["evidence_credit"]
                         for skill in set(must_skills + must_unknown_skills + nice_skills + nice_unknown_skills)
-                        if skill in resume_mentions and resume_mentions[skill]["section"] in ("experience", "projects")]
+                        if skill in resume_mentions and (
+                            resume_mentions[skill]["section"] in ("experience", "projects") or
+                            (resume_mentions[skill]["section"] == "other" and
+                             resume_mentions[skill]["evidence_credit"] >= 0.75))]
         # Additional weaker evidence must not dilute existing evidence or the
         # established neutral baseline when no duration is requested.
         experience_fit = _fraction(max([NEUTRAL_COMPONENT, *demonstrated]))
@@ -335,7 +342,17 @@ def score(resume_text, jd_text, semantic_similarity, *, job_title="", as_of_date
         "experience": experience_fit,
         "education_title": _education_title_fit(resume_text, jd_text, job_title),
     }
-    component_points = {name: round(components[name] * maximum, 2) for name, maximum in WEIGHTS.items()}
+    weights = dict(WEIGHTS)
+    if not any(item["priority"] == "nice_to_have" for item in requirements):
+        # Redistribute absent optional criteria proportionally. Largest
+        # remainders preserve integer display weights totaling exactly 100.
+        weights["nice_to_have"] = 0
+        denominator = sum(weights.values())
+        scaled = {name: divmod(weight * 100, denominator) for name, weight in weights.items()}
+        weights = {name: value[0] for name, value in scaled.items()}
+        for name in sorted(weights, key=lambda name: scaled[name][1], reverse=True)[:100 - sum(weights.values())]:
+            weights[name] += 1
+    component_points = {name: round(components[name] * maximum, 2) for name, maximum in weights.items()}
     raw_score = sum(component_points.values())
     must_have_count = len(must_skills) + len(must_unknown_skills) + len(required_years) + len(education_requirements)
     missing_count = len(missing) + len(missing_year_requirements) + len(missing_education)
@@ -374,7 +391,7 @@ def score(resume_text, jd_text, semantic_similarity, *, job_title="", as_of_date
         "raw_score": round(raw_score, 2),
         "components": components,
         "component_points": component_points,
-        "weights": dict(WEIGHTS),
+        "weights": weights,
         "requirement_coverage": {"total": len(assessed), "recognized": len(recognized),
                                  "ratio": round(len(recognized) / len(assessed), 4) if assessed else 0.0,
                                  "needs_review": [item["text"][:200] for item in assessed if item["text"] not in recognized_texts][:100]},

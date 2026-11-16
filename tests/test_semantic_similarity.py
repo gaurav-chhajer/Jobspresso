@@ -18,6 +18,19 @@ def vector(first, second=0.0):
 
 
 class SemanticSimilarityTests(unittest.TestCase):
+    def test_location_and_benefits_do_not_enter_semantic_fit(self):
+        scorer = FakeScorer({"Kotlin project": vector(1), "Kotlin required": vector(1),
+                             "Docker preferred": vector(0, 1)})
+        jd = "Requirements\nKotlin required\nBonus\nDocker preferred"
+        baseline = semantic.section_similarity("Projects\nKotlin project", jd, scorer,
+                                               resume_owner="resume", jd_owner="job")
+        located = semantic.section_similarity("Projects\nKotlin project",
+            jd + "\nLocation\nRemote-first, GMT+4 preferred.\n#LI-Remote\nBenefits\nTravel stipend",
+            scorer, resume_owner="resume", jd_owner="job")
+        self.assertEqual(baseline, located)
+        self.assertLess(baseline, 1)
+        self.assertFalse(any("GMT" in text or "stipend" in text for text, _ in scorer.calls))
+
     def test_sections_compare_each_jd_section_to_best_resume_section(self):
         scorer = FakeScorer({
             "Python role": vector(1), "SQL project": vector(0, 1),

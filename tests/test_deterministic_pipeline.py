@@ -30,10 +30,10 @@ class DeterministicPipelineTests(unittest.TestCase):
             result = pipeline_skeleton.score_job_deterministic(user, job, "Example", scorer)
             repeated = pipeline_skeleton.score_job_deterministic(user, job, "Example", scorer)
         self.assertEqual(result, repeated)
-        self.assertEqual(result["fit_score"], 56)
+        self.assertEqual(result["fit_score"], 57)
         self.assertIn("Python", result["matched_skills"])
         self.assertEqual(result["missing_requirements"], [])
-        self.assertEqual(result["scorer_version"], "deterministic-v5")
+        self.assertEqual(result["scorer_version"], "deterministic-v6")
         semantic.assert_called_once()
 
 

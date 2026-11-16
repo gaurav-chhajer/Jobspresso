@@ -45,6 +45,7 @@ class DeterministicStoreTests(unittest.TestCase):
         result = deterministic_scoring.score("Python project", "Python required", 0.7,
                                              as_of_date=date(2026, 1, 1))
         result["scorer_version"] = "deterministic-v2"
+        result["weights_version"] = "weights-v1"
         result.pop("weights")
         displayed = store._deterministic_breakdown(json.dumps(result))
         self.assertEqual(displayed["weights"], deterministic_scoring.WEIGHTS)

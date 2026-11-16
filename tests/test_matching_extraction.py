@@ -5,6 +5,102 @@ from backend import matching_extraction as extraction
 
 
 class MatchingExtractionTests(unittest.TestCase):
+    def test_bonus_is_optional_and_location_is_not_a_requirement(self):
+        text = ("Requirements\nNative Android development with Kotlin and Jetpack Compose\n"
+                "Have designed and run A/B tests\nBonus\n"
+                "Experience with audio playback or streaming on Android\n"
+                "Experience building mobile infrastructure for build, test and release pipelines\n"
+                "Location\nThis role is remote-first with GMT to GMT+4 timezones preferred.\n"
+                "If you prefer, work from London or Paris.\n#LI-Remote")
+        items = extraction.extract_jd_requirements(text)
+        self.assertEqual(len(items), 4)
+        self.assertEqual([item["priority"] for item in items],
+                         ["must_have", "must_have", "nice_to_have", "nice_to_have"])
+        self.assertEqual(items[1]["skills"], ["A/B testing"])
+        self.assertIn("Audio playback", items[2]["skills"])
+        self.assertIn("Audio streaming", items[2]["skills"])
+        self.assertIn("CI/CD", items[3]["skills"])
+        self.assertEqual(items[3]["line"], 6)
+
+    def test_inline_location_and_standalone_ats_tags_are_excluded(self):
+        items = extraction.extract_jd_requirements(
+            "Requirements: Kotlin required. Bonus: Docker. Location: Python required in London.")
+        self.assertEqual([(item["skills"], item["priority"]) for item in items],
+                         [(["Kotlin"], "must_have"), (["Docker"], "nice_to_have")])
+        self.assertEqual(len(extraction.extract_jd_requirements("Requirements\nKotlin\n#LI-Remote")), 1)
+
+    def test_sentence_verbs_are_not_unknown_technologies(self):
+        for clause in ("Care deeply about developer experience and engineering productivity",
+                       "Write clean, maintainable code and enjoy owning systems end-to-end"):
+            with self.subTest(clause=clause):
+                self.assertEqual(extraction.extract_jd_requirements("Requirements\n" + clause)[0]["unknown_skills"], [])
+        unknown, = extraction.extract_jd_requirements("Requirements\nAcmeCloud platform experience required")
+        self.assertEqual(unknown["unknown_skills"], ["AcmeCloud"])
+
+    def test_capabilities_keep_partial_transfer_and_contextual_delivery_evidence(self):
+        mentions = extraction.expand_implied_skills(extraction.extract_skill_mentions(
+            "Projects\nDeployed services via GitHub Actions with automated builds."))
+        by_skill = {item["skill"]: item for item in mentions}
+        self.assertEqual(by_skill["CI/CD"]["evidence_credit"], 0.75)
+        self.assertEqual(by_skill["Workflow automation"]["match_type"], "alias")
+        self.assertEqual(by_skill["Developer tooling"]["evidence_credit"], 0.4)
+        self.assertNotIn("Coding agents", by_skill)
+        for text in ("Skills\nGitHub Actions", "Summary\nRead AI news", "No experience with coding agents"):
+            names = {item["skill"] for item in extraction.extract_skill_mentions(text)}
+            self.assertFalse(names & {"CI/CD", "Coding agents"})
+
+    def test_ai_application_outcome_is_evidence_but_news_and_learning_are_not(self):
+        mentions = extraction.extract_skill_mentions(
+            "Projects\nIncreased engagement by 30% by building an AI journaling app.")
+        self.assertEqual(next(item for item in mentions if item["skill"] == "Artificial intelligence")["evidence_credit"], 1)
+        self.assertNotIn("Artificial intelligence", {item["skill"] for item in
+            extraction.extract_skill_mentions("Summary\nRead AI news")})
+        learning = extraction.extract_skill_mentions("Projects\nLearning about building an AI application.")
+        self.assertLessEqual(next(item for item in learning if item["skill"] == "Artificial intelligence")["evidence_credit"], 0.1)
+
+    def test_qualification_introductory_lines_are_not_clauses(self):
+        items = extraction.extract_jd_requirements(
+            "What We\u2019re Looking For\n"
+            "We\u2019re looking for strong engineers who enjoy building systems that improve how software gets built.\n"
+            "You might be a good fit if you:\nEnjoy designing systems that automate complex workflows")
+        self.assertEqual(len(items), 2)
+        self.assertEqual(items[0]["skills"], [])
+        self.assertEqual(items[1]["skills"], ["Workflow automation"])
+
+    def test_clay_curly_apostrophe_heading_keeps_unmapped_qualifications(self):
+        items = extraction.extract_jd_requirements(
+            "What You\u2019ll Work On\nCI/CD pipelines, including evaluation and validation.\n"
+            "What We\u2019re Looking For\n"
+            "Have experience building developer tooling, infrastructure, or internal platforms\n"
+            "Enjoy designing systems that automate complex workflows\n"
+            "Why This Role Is Unique\nSoftware engineering is changing quickly.")
+        required = [item for item in items if item["priority"] == "must_have"]
+        self.assertEqual(len(required), 2)
+        self.assertEqual(required[0]["line"], 4)
+        self.assertEqual(required[1]["line"], 5)
+        self.assertNotIn("Software engineering is changing quickly.", [item["text"] for item in items])
+
+    def test_skills_need_to_bring_heading_preserves_all_required_clauses(self):
+        items = extraction.extract_jd_requirements(
+            "ABOUT THE ROLE\nWe use TypeScript.\nSKILLS YOU'LL NEED TO BRING\n"
+            "Over 10 years of experience.\n"
+            "Experience building developer tooling (CI/CD).\n"
+            "Strong collaboration and communication skills.\nBenefits\nPaid time off.")
+        required = [item for item in items if item["priority"] == "must_have"]
+        self.assertEqual(len(required), 3)
+        self.assertEqual(required[0]["minimum_years"], 10)
+        self.assertEqual(required[1]["skills"], ["CI/CD", "Developer tooling"])
+        self.assertEqual(required[2]["text"], "Strong collaboration and communication skills.")
+        self.assertNotIn("SKILLS YOU'LL NEED TO BRING", [item["text"] for item in items])
+
+    def test_need_to_bring_scope_ends_before_company_policy_sections(self):
+        for heading in ("A NOTE ON AI", "EQUAL OPPORTUNITY & ACCOMMODATIONS"):
+            with self.subTest(heading=heading):
+                items = extraction.extract_jd_requirements(
+                    "SKILLS YOU'LL NEED TO BRING\nCI/CD experience.\n" + heading +
+                    "\nWe encourage everyone to apply. Python curiosity is welcome.")
+                self.assertEqual([item["text"] for item in items], ["CI/CD experience."])
+
     def test_optional_scope_and_negated_required_heading(self):
         items = extraction.extract_jd_requirements("Requirements: Python required. Additional Experience (Not Required): C++. Docker.")
         self.assertEqual([(q["skills"], q["priority"]) for q in items],
@@ -151,7 +247,7 @@ class MatchingExtractionTests(unittest.TestCase):
         })
 
     def test_versioned_android_taxonomy_and_framework_implications(self):
-        self.assertEqual(extraction.TAXONOMY_VERSION, "skills-v4-esco-1.2.0")
+        self.assertEqual(extraction.TAXONOMY_VERSION, "skills-v6-esco-1.2.0")
         mentions = extraction.expand_implied_skills(
             extraction.extract_skill_mentions("Skills\nJetpack Compose, Coroutines, Hilt, Retrofit, Room, "
                                               "Firebase, Kafka, GraphQL, Terraform"))
