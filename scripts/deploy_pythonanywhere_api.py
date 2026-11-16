@@ -125,7 +125,7 @@ def deploy(sha):
             # Reconcile through read-only status checks; never resend the mutation.
             reload_acknowledged = False
             logger.warning('Reload acknowledgement unavailable; checking this run and commit for activation without resending reload')
-        deadline = time.monotonic() + 180
+        deadline = time.monotonic() + 240
         while time.monotonic() < deadline:
             with call('GET', 'files/path' + str(legacy.STATUS), 'confirmation') as response:
                 if response.status_code == 200:

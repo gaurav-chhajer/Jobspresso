@@ -1013,13 +1013,16 @@ Push to `main` or run **Actions > Deploy PythonAnywhere > Run workflow**. No con
 ID or console opening is needed. The first API deployment uploads the loader and
 WSGI entry point before reloading, so the old checkout need not be pulled manually.
 
-The workflow shares the scheduled worker concurrency group. It waits up to three
+The workflow shares the scheduled worker concurrency group. It waits up to four
 minutes for `data/deployment-status.json` to report the exact run and commit. A
 failed upload or rejected reload stops without retrying mutations. If the reload
 response is lost to a network error, the runner checks status within that same
-three-minute window without resending the reload. Only a successful status for
+four-minute window without resending the reload. Only a successful status for
 the exact run and commit confirms activation; stale, missing, or failed status
-cannot produce success. Safe exception and cause types distinguish connection
+cannot produce success. Backups have a 120-second copy budget within a 180-second
+migration window; an approximately 80 MiB hosted backup was measured completing
+near 91 seconds. Backup integrity checks and retention of the previous release
+still gate activation. Safe exception and cause types distinguish connection
 failures from timeouts without exposing private error text. Check the status file,
 the website, and the PythonAnywhere error log before retrying an unresolved timeout. Releases
 are retained for rollback and use the free account's disk allowance; remove old

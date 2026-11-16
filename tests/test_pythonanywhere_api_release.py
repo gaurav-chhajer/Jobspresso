@@ -20,6 +20,45 @@ RUN = 'b' * 32
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_backup_accepts_measured_latency_but_still_rejects_deadline_and_corruption(self):
+        for elapsed, check, error in ((91, 'ok', None), (121, 'ok', 'time budget'),
+                                      (91, 'corrupt', 'integrity check')):
+            with self.subTest(elapsed=elapsed, check=check), tempfile.TemporaryDirectory(dir='tests') as directory:
+                root = Path(directory)
+                source, target = MagicMock(), MagicMock()
+                target.execute.return_value.fetchone.return_value = (check,)
+                with patch.object(migration.time, 'time', return_value=1000) as clock, \
+                        patch.object(migration.sqlite3, 'connect', side_effect=[source, target]):
+                    def finish(*args, **kwargs):
+                        clock.return_value = 1000 + elapsed
+                        kwargs['progress'](sqlite3.SQLITE_DONE, 0, 20000)
+                    source.backup.side_effect = finish
+                    if error:
+                        with self.assertRaisesRegex(RuntimeError, error):
+                            migration.backup_database(root / 'jobs.db', 'test', 1300, root / 'backups')
+                        self.assertEqual(list((root / 'backups').glob('*.db')), [])
+                    else:
+                        saved = migration.backup_database(root / 'jobs.db', 'test', 1300, root / 'backups')
+                        self.assertTrue(saved.is_file())
+                        target.execute.assert_called_once_with('PRAGMA quick_check')
+                source.close.assert_called_once()
+                target.close.assert_called_once()
+
+    def test_activation_allows_the_full_migration_window(self):
+        helper = MagicMock()
+        app = object()
+        with patch.object(Path, 'exists', return_value=True), \
+                patch.object(release, '_json_file', side_effect=[{'sha': 'c' * 40}, self.request()]), \
+                patch.object(release, '_pipeline_lock'), \
+                patch.object(release, '_extract', return_value=release.RELEASES / SHA), \
+                patch.object(release, '_migration_module', return_value=helper), \
+                patch.object(release, '_atomic_json'), patch.object(release, '_preflight'), \
+                patch.object(release, '_import_application', return_value=app), \
+                patch.object(release.time, 'time', return_value=1000):
+            self.assertIs(release.application(), app)
+        self.assertEqual(helper.migrate_pending.call_args.kwargs['deadline'],
+                         1000 + migration.MAX_MIGRATION_SECONDS)
+
     def request(self, archive_hash='c' * 64):
         return {'sha': SHA, 'archive_sha256': archive_hash, 'run_id': RUN}
 
@@ -269,7 +308,7 @@ class ApiTests(unittest.TestCase):
         old = self.response(content=json.dumps({'run_id': 'c' * 32, 'sha': SHA, 'success': True}).encode())
         current = self.response(content=json.dumps({'run_id': RUN, 'sha': SHA, 'success': True}).encode())
         session = self.reload_session(api.requests.ReadTimeout(), [old, current])
-        self.assertEqual(self.deploy_mock_session(session, [0, 0, 1]), 0)
+        self.assertEqual(self.deploy_mock_session(session, [0, 0, 181]), 0)
         self.assertEqual(session.request.call_count, 11)
 
     def test_uncertain_reload_missing_or_old_status_expires_without_success(self):
@@ -278,7 +317,7 @@ class ApiTests(unittest.TestCase):
             with self.subTest(status=response.status_code):
                 session = self.reload_session(api.requests.ReadTimeout(), [response])
                 with self.assertRaisesRegex(api.legacy.RemoteDeploymentError, 'deadline_expired') as raised:
-                    self.deploy_mock_session(session, [0, 0, 181])
+                    self.deploy_mock_session(session, [0, 0, 241])
                 self.assertEqual(raised.exception.stage, 'confirmation')
                 self.assertEqual(session.request.call_count, 10)
 

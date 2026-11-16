@@ -176,7 +176,7 @@ def application():
                 stage = 'migrations'
                 _migration_module(release).migrate_pending(
                     database=DATA / 'jobs.db', migration_dir=release / 'backend/migrations',
-                    backup_dir=DATA / 'backups', deadline=time.time() + 90,
+                    backup_dir=DATA / 'backups', deadline=time.time() + 180,
                     deployment_sha=request['sha'], runtime_root=release,
                     python_executable=ROOT / '.venv/bin/python')
                 stage = 'startup'

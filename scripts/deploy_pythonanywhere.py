@@ -22,8 +22,9 @@ API = 'https://www.pythonanywhere.com/api/v0/user/GauravChhajer/'
 DOMAIN = 'gauravchhajer.pythonanywhere.com'
 STATUS = ROOT / 'data/deployment-status.json'
 logger = logging.getLogger(__name__)
-MAX_BACKUP_SECONDS = 60
-MAX_MIGRATION_SECONDS = 90
+# Hosted measurements put an 80 MiB backup's durable completion near 91 seconds.
+MAX_BACKUP_SECONDS = 120
+MAX_MIGRATION_SECONDS = 180
 MIGRATION_STEPS = frozenset({'inspect', 'backup', 'apply', 'verify'})
 
 
