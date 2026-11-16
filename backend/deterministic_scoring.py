@@ -9,7 +9,7 @@ from datetime import date
 from backend import matching_extraction as extraction
 
 
-SCORER_VERSION = "deterministic-v6"
+SCORER_VERSION = "deterministic-v7"
 WEIGHTS_VERSION = "weights-v2"
 WEIGHTS = {
     "must_have": 40,
@@ -168,6 +168,8 @@ def score(resume_text, jd_text, semantic_similarity, *, job_title="", as_of_date
     jd_mentions = extraction.extract_skill_mentions(jd_text, all_mentions=True)
     requirements = extraction.extract_jd_requirements(jd_text, job_title=job_title)
     groq_assessed_clauses = set()
+    original_assisted_unknowns = {}
+    assisted_needs_review = set()
     if requirement_assessments is not None:
         if not isinstance(requirement_assessments, dict):
             raise ValueError("Requirement assessments must be a mapping")
@@ -183,6 +185,7 @@ def score(resume_text, jd_text, semantic_similarity, *, job_title="", as_of_date
                 raise ValueError("Requirement assessment does not target an unassessed clause")
             known_terms = {mention["skill"] for term in terms
                            for mention in extraction.extract_skill_mentions(term, section_context="requirements")}
+            original_assisted_unknowns[clause] = set(item["unknown_skills"])
             item["skills"] = sorted(known_terms)
             item["unknown_skills"] = sorted((set(item["unknown_skills"]) | (set(terms) - known_terms)) - known_terms,
                                              key=str.casefold)
@@ -255,6 +258,17 @@ def score(resume_text, jd_text, semantic_similarity, *, job_title="", as_of_date
         resume_mentions[pair["jd_skill"]] = dict(evidence, skill=pair["jd_skill"], match_type="fuzzy",
                                                    fuzzy_from=pair["resume_skill"],
                                                    evidence_credit=min(evidence["evidence_credit"], 0.4))
+    for item in requirements:
+        if item["text"] not in groq_assessed_clauses:
+            continue
+        if any(skill not in resume_mentions for skill in item["skills"] + item["unknown_skills"]):
+            assisted_needs_review.add(item["text"])
+        # Generated competency labels are suggestions, not proof of a missing
+        # qualification. Resolve exact/implied/fuzzy evidence first; retain
+        # original named-technology gaps, and expose unresolved clauses for review.
+        item["skills"] = [skill for skill in item["skills"] if skill in resume_mentions]
+        item["unknown_skills"] = [skill for skill in item["unknown_skills"]
+                                  if skill in original_assisted_unknowns[item["text"]] or skill in resume_mentions]
     must_skills = sorted({skill for item in requirements if item["priority"] == "must_have"
                           for skill in item["skills"]})
     must_unknown_skills = sorted({skill for item in requirements if item["priority"] == "must_have"
@@ -382,9 +396,10 @@ def score(resume_text, jd_text, semantic_similarity, *, job_title="", as_of_date
     if seniority_gap:
         missing_requirements.append({"jd": job_title, "jd_line": 0, "reason": "seniority"})
     assessed = [item for item in requirements if item["priority"] in {"must_have", "nice_to_have", "inferred_must_have"}]
-    recognized = [item for item in assessed if item["skills"] or item["minimum_years"] is not None
+    recognized = [item for item in assessed if item["text"] not in assisted_needs_review and (
+                  item["skills"] or item["minimum_years"] is not None
                   or item["text"] in groq_assessed_clauses
-                  or education_by_clause.get(item["text"])]
+                  or education_by_clause.get(item["text"]))]
     recognized_texts = {item["text"] for item in recognized}
     return {
         "score": final_score,

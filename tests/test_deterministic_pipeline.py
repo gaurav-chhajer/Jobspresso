@@ -33,7 +33,7 @@ class DeterministicPipelineTests(unittest.TestCase):
         self.assertEqual(result["fit_score"], 57)
         self.assertIn("Python", result["matched_skills"])
         self.assertEqual(result["missing_requirements"], [])
-        self.assertEqual(result["scorer_version"], "deterministic-v6")
+        self.assertEqual(result["scorer_version"], "deterministic-v7")
         semantic.assert_called_once()
 
 

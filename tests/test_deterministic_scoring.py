@@ -5,6 +5,48 @@ from backend import deterministic_scoring as scoring
 
 
 class DeterministicScoringTests(unittest.TestCase):
+    def test_unsupported_assisted_phrases_do_not_become_missing_skills(self):
+        resume = "Experience\nShipped Android features using Kotlin.\nSkills\nJetpack Compose"
+        ambiguity = "Comfortable with ambiguity and fast-changing priorities, and able to add structure"
+        performance = "Experience owning performance, quality and responsiveness in a production app"
+        jd = "Requirements\nAndroid, Kotlin, Jetpack Compose\nHave designed and run A/B tests\n" + ambiguity + "\n" + performance
+        baseline = scoring.score(resume, jd, 0.516, as_of_date=date(2026, 11, 16))
+        assisted = scoring.score(resume, jd, 0.516, as_of_date=date(2026, 11, 16),
+            requirement_assessments={ambiguity: ["Ambiguity", "Adding structure", "Fast-changing priorities"],
+                                     performance: ["Performance", "Production app", "Responsiveness"]})
+        self.assertEqual(assisted["score"], baseline["score"])
+        self.assertEqual(assisted["components"], baseline["components"])
+        self.assertEqual(assisted["missing_must_have"], ["A/B testing"])
+        self.assertEqual(assisted["requirement_coverage"]["needs_review"], [ambiguity, performance])
+
+    def test_assistance_preserves_explicit_unknown_technology_gaps(self):
+        clause = "AcmeCloud platform experience required"
+        result = scoring.score("Experience\nBuilt Python services", "Requirements\n" + clause, 0.7,
+            as_of_date=date(2026, 11, 16), requirement_assessments={clause: ["Cloud architecture"]})
+        self.assertEqual(result["missing_must_have"], ["AcmeCloud"])
+        self.assertNotIn("Cloud architecture", result["must_have_unknown_skills"])
+        self.assertIn(clause, result["requirement_coverage"]["needs_review"])
+
+    def test_partial_assistance_remains_in_manual_review(self):
+        clause = "Experience building identity platforms"
+        result = scoring.score("Experience\nIdentity platform development", "Requirements\n" + clause, 0.5,
+            as_of_date=date(2026, 11, 16),
+            requirement_assessments={clause: ["identity platform development", "Ambiguity"]})
+        self.assertIn("identity platform development", {item.get("skill") for item in result["matched"]})
+        self.assertEqual(result["missing_must_have"], [])
+        self.assertEqual(result["requirement_coverage"]["recognized"], 0)
+        self.assertEqual(result["requirement_coverage"]["needs_review"], [clause])
+
+    def test_assisted_fuzzy_evidence_is_resolved_before_filtering_terms(self):
+        clause = "Experience building identity platforms"
+        term = "identity platform development"
+        result = scoring.score("Skills\nIdentity systems", "Requirements\n" + clause, 0.5,
+            as_of_date=date(2026, 11, 16), requirement_assessments={clause: [term]},
+            fuzzy_skill_pairs=[{"jd_skill": term, "resume_skill": "Identity systems", "cosine": 0.95, "type": "fuzzy"}])
+        self.assertEqual(result["missing_must_have"], [])
+        self.assertEqual(result["matched"][0]["type"], "fuzzy")
+        self.assertEqual(result["requirement_coverage"]["recognized"], 1)
+
     def test_android_bonus_is_lower_weight_and_location_cannot_change_fit(self):
         resume = ("Experience\nShipped Android features using Kotlin and CI/CD pipelines.\n"
                   "Skills\nJetpack Compose\nProjects\nBuilt an Azure Speech-to-Text prototype.")
@@ -105,7 +147,7 @@ class DeterministicScoringTests(unittest.TestCase):
         self.assertEqual(result["score"], 88)
         self.assertEqual(result["components"]["must_have"], 1.0)
         self.assertEqual(result["matched"][0]["type"], "exact")
-        self.assertEqual(result["scorer_version"], "deterministic-v6")
+        self.assertEqual(result["scorer_version"], "deterministic-v7")
 
     def test_cache_version_changes_daily_only_for_current_experience(self):
         static_resume = "Experience\nPython developer | Jan 2020 - Dec 2022"
