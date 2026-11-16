@@ -158,7 +158,7 @@ class DeterministicScoringTests(unittest.TestCase):
         self.assertEqual(result["score"], 88)
         self.assertEqual(result["components"]["must_have"], 1.0)
         self.assertEqual(result["matched"][0]["type"], "exact")
-        self.assertEqual(result["scorer_version"], "deterministic-v8")
+        self.assertEqual(result["scorer_version"], "deterministic-v9")
 
     def test_cache_version_changes_daily_only_for_current_experience(self):
         static_resume = "Experience\nPython developer | Jan 2020 - Dec 2022"

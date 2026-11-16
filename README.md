@@ -90,13 +90,17 @@ The current `skills-v6-esco-1.2.0` taxonomy preserves the curated project skills
 and directional implications, with a small reviewed set of exact English aliases
 from ESCO. Broader ESCO terms were not enabled as automatic matches because that
 would add ambiguous and overly general requirements without human validation.
-The deterministic-v8 scorer also recognizes explicit developer-tooling,
+The deterministic-v9 scorer also recognizes explicit developer-tooling,
 infrastructure, workflow-automation, AI, and software-lifecycle capabilities.
 CI/CD supplies partial transferable evidence for developer tooling, automation,
 and lifecycle work; it does not prove coding-agent, monorepo, or cloud-development
 environment experience. GitHub Actions counts as CI/CD only with build/deployment
 context. Sentence verbs are excluded from unknown skills, and unassessed clauses
 remain listed for manual review. Qualification introductions are not scored.
+Each score also reports clause-level evidence as supported, partial, no evidence
+detected, or manual review, with the resume text that triggered each detected
+match. Parser coverage counts clauses the parser mapped; it does not indicate
+how strongly the resume supports those clauses.
 When a posting has no optional requirements, weights-v2 gives that component zero
 weight and redistributes its weight proportionally across the other components
 (44/0/28/17/11); postings with optional requirements retain 40/10/25/15/10.

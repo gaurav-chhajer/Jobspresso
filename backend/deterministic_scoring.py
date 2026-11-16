@@ -9,7 +9,7 @@ from datetime import date
 from backend import matching_extraction as extraction
 
 
-SCORER_VERSION = "deterministic-v8"
+SCORER_VERSION = "deterministic-v9"
 WEIGHTS_VERSION = "weights-v2"
 WEIGHTS = {
     "must_have": 40,
@@ -38,7 +38,7 @@ def cache_version(resume_text, as_of_date, embedding_revision):
     if type(as_of_date) is not date or not isinstance(embedding_revision, str) or not embedding_revision.strip():
         raise ValueError("Cache version inputs are invalid")
     date_key = as_of_date.isoformat() if extraction.has_current_experience_date(resume_text) else "static"
-    return ":".join((SCORER_VERSION, WEIGHTS_VERSION, "coverage-v10-groq-assist", extraction.PARSER_VERSION,
+    return ":".join((SCORER_VERSION, WEIGHTS_VERSION, "requirement-evidence-v11", extraction.PARSER_VERSION,
                      extraction.TAXONOMY_VERSION,
                      embedding_revision, date_key))
 
@@ -56,12 +56,20 @@ def template_explanation(result):
     if isinstance(coverage, dict):
         parts.append(f"Recognized {coverage['recognized']} of {coverage['total']} requirement clauses; "
                      "unrecognized clauses need manual review.")
-    if gaps:
-        parts.append(f"{len(gaps)} required gap(s) are listed below.")
-    elif missing_skills:
-        parts.append("Required skill gaps are listed below.")
-    else:
-        parts.append("No gaps among recognized requirements; unrecognized requirements still need review.")
+    evidence_summary = result.get("requirement_summary", {})
+    if evidence_summary.get("no_evidence", 0):
+        parts.append(f"No resume evidence was detected for {evidence_summary['no_evidence']} mapped requirement(s).")
+    if evidence_summary.get("partial", 0):
+        parts.append(f"Partial resume evidence was detected for {evidence_summary['partial']} mapped requirement(s).")
+    if evidence_summary.get("manual_review", 0):
+        parts.append(f"{evidence_summary['manual_review']} mapped requirement(s) need manual review.")
+    if gaps or missing_skills:
+        parts.append("Review the required clauses with unmet criteria below.")
+    elif not evidence_summary:
+        parts.append("This saved result predates clause-level evidence; an empty missing-skills list does not mean every clause is fully supported.")
+    elif (evidence_summary.get("supported", 0) and not evidence_summary.get("no_evidence") and
+          not evidence_summary.get("partial") and not evidence_summary.get("manual_review")):
+        parts.append("Resume evidence was detected for all mapped requirements; review the clauses and evidence below.")
     return " ".join(parts)
 
 
@@ -401,6 +409,55 @@ def score(resume_text, jd_text, semantic_similarity, *, job_title="", as_of_date
                   or item["text"] in groq_assessed_clauses
                   or education_by_clause.get(item["text"]))]
     recognized_texts = {item["text"] for item in recognized}
+    requirement_evidence = []
+    for item in assessed:
+        clause = item["text"]
+        criteria = []
+        for skill in item["skills"] + item["unknown_skills"]:
+            mention = resume_mentions.get(skill)
+            credit = mention["evidence_credit"] if mention else 0.0
+            if item["priority"] == "inferred_must_have":
+                credit = min(credit, 0.4)
+            criteria.append({
+                "criterion": skill,
+                "status": "supported" if credit >= 0.75 else "partial" if credit > 0 else "no_evidence",
+                "resume_evidence": mention["matched_text"] if mention else "",
+                "evidence_type": mention["match_type"] if mention else "",
+            })
+        if item["minimum_years"] is not None:
+            observed = observed_years(item)
+            criteria.append({
+                "criterion": f"{item['minimum_years']:g}+ years",
+                "status": "supported" if observed >= item["minimum_years"] else "partial" if observed > 0 else "no_evidence",
+                "resume_evidence": f"{observed:g} years detected",
+                "evidence_type": "experience_duration",
+            })
+        for education in education_by_clause[clause]:
+            candidate = next((candidate for candidate in resume_education
+                              if _education_evidence_matches(education, candidate)), None)
+            criteria.append({
+                "criterion": education["text"],
+                "status": "supported" if candidate else "no_evidence",
+                "resume_evidence": candidate["text"] if candidate else "",
+                "evidence_type": "education" if candidate else "",
+            })
+        if clause in assisted_needs_review or not criteria:
+            status = "manual_review"
+        elif all(entry["status"] == "supported" for entry in criteria):
+            status = "supported"
+        elif any(entry["status"] in {"supported", "partial"} for entry in criteria):
+            status = "partial"
+        else:
+            status = "no_evidence"
+        requirement_evidence.append({
+            "jd": clause,
+            "jd_line": item["line"],
+            "priority": item["priority"],
+            "status": status,
+            "criteria": criteria,
+        })
+    requirement_summary = {status: sum(entry["status"] == status for entry in requirement_evidence)
+                           for status in ("supported", "partial", "no_evidence", "manual_review")}
     return {
         "score": final_score,
         "raw_score": round(raw_score, 2),
@@ -410,6 +467,8 @@ def score(resume_text, jd_text, semantic_similarity, *, job_title="", as_of_date
         "requirement_coverage": {"total": len(assessed), "recognized": len(recognized),
                                  "ratio": round(len(recognized) / len(assessed), 4) if assessed else 0.0,
                                  "needs_review": [item["text"][:200] for item in assessed if item["text"] not in recognized_texts][:100]},
+        "requirement_evidence": requirement_evidence,
+        "requirement_summary": requirement_summary,
         "matched": matched,
         "missing_must_have": missing,
         "missing_inferred_skills": missing_inferred,
