@@ -385,7 +385,12 @@ def _fetch_and_score(client, deadline, fetch_only, pool, stop=None, *, allow_par
                 bool(tavily_keys), len(tavily_keys))
     if tavily_keys and (stop is None or not stop.is_set()):
         # This pass has its own budget; ATS fetching remains independent of search coverage.
-        discover_roles(client, tavily_keys, min(deadline - 120, time.monotonic() + TAVILY_CYCLE_SECONDS), stop)
+        try:
+            discover_roles(client, tavily_keys, min(deadline - 120, time.monotonic() + TAVILY_CYCLE_SECONDS), stop)
+        except (requests.RequestException, RuntimeError, ValueError, KeyError, TypeError) as error:
+            # Do not replay uncertain discovery writes or block independent career feeds.
+            logger.error('Web discovery stopped: error=%s; direct career sources will continue', type(error).__name__)
+            failed = True
     with parallel_downloads(companies, deadline, stop) as downloads:
         for company, downloaded in downloads:
             if stop is not None and stop.is_set():

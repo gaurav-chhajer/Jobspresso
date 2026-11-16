@@ -614,10 +614,18 @@ def register_routes(application, connection, database):
                 return {'error': 'Inputs changed; description discarded'}, 409
             if job['company_id'] not in matching_tasks.companies_for_user(conn, user_id):
                 return {'error': 'Subscription changed; description discarded'}, 409
-            company = conn.execute('SELECT career_source,active FROM companies WHERE id=?', (job['company_id'],)).fetchone()
+            company = conn.execute('SELECT career_source,active,board_slug,name FROM companies WHERE id=?', (job['company_id'],)).fetchone()
             raw = json.loads(job['raw_json'])
             key = raw.get('career_source')
-            if not company['active'] or key not in SOURCES or key != company['career_source'] or SOURCES[key][1] == 'blocked':
+            owns_source = key == company['career_source']
+            if key == 'yc' and company['career_source'] is None:
+                from backend.yc_career_source import employer
+                name, slug = employer(raw)
+                owns_source = (company['board_slug'] == 'yc-employer-' + slug and company['name'] == name
+                               and re.fullmatch(r'yc-[1-9][0-9]*', job['external_id']) is not None
+                               and isinstance(job['url'], str)
+                               and job['url'].startswith(SOURCES['yc'][2] + raw['employer_path'] + '/jobs/'))
+            if not company['active'] or key not in SOURCES or not owns_source or SOURCES[key][1] == 'blocked':
                 raise ValueError('Description does not belong to a supported career source')
             raw['descriptionHtml'] = text
             raw['resolved_title'], raw['resolved_location'] = title, location

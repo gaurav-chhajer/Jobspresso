@@ -26,6 +26,20 @@ class ObservationEndpointTests(CloudEndpointTests):
         self.assertFalse(any(row['board_slug'].startswith('yc-employer-') for row in self.call('companies').json['companies']))
         work = self.call('work?company_id=' + str(source['id'])).json['items']
         self.assertEqual({item['company_name'] for item in work}, {'Startup Alpha', 'Startup Beta'})
+        item = work[0]
+        data = dict(user_id=1, job_id=item['job']['id'], fingerprint=item['fingerprint'],
+                    description='<p>Python and SQL services.</p>', title=item['job']['title'], location='Remote')
+        response = self.call('description', data)
+        self.assertEqual(response.status_code, 200)
+        data['fingerprint'] = response.json['fingerprint']
+        job_id = item['job']['id']
+        raw = json.loads(self.conn.execute('SELECT raw_json FROM jobs WHERE id=?', (job_id,)).fetchone()[0])
+        raw['employer_path'] = '/companies/unrelated'
+        self.conn.execute('UPDATE jobs SET raw_json=? WHERE id=?', (json.dumps(raw), job_id))
+        self.conn.commit()
+        current = next(entry for entry in self.call('work').json['items'] if entry['job']['id'] == job_id)
+        data['fingerprint'] = current['fingerprint']
+        self.assertEqual(self.call('description', data).status_code, 400)
 
     def test_catalog_adds_verified_hsbc_once_without_changing_settings(self):
         for _ in range(2):

@@ -524,6 +524,22 @@ class CloudEndpointTests(unittest.TestCase):
             self.assertEqual(runner.send_emails(client, 420), 0)
         mail.assert_called_once()
 
+    def test_discovery_write_failure_does_not_stop_direct_feed_fetching(self):
+        client = MagicMock()
+        def hosted_call(route, data=None):
+            response = self.call(route, data)
+            self.assertEqual(response.status_code, 200, response.json)
+            return response.json
+        client.call.side_effect = hosted_call
+        with patch.object(runner, 'configured_tavily_keys', return_value=('synthetic',)), \
+                patch.object(runner, 'discover_roles', side_effect=runner.HostedOperationError(400)), \
+                patch.object(pipeline, 'fetch_jobs_for_company', return_value=[]) as fetch, \
+                patch.object(runner.time, 'monotonic', return_value=0), \
+                self.assertLogs(runner.logger, level='ERROR') as logs:
+            self.assertEqual(runner._fetch_and_score(client, 3000, True, None, allow_partial=True), 0)
+        self.assertEqual(fetch.call_count, 2)
+        self.assertIn('direct career sources will continue', '\n'.join(logs.output))
+
     def test_deterministic_provider_scores_hosted_jobs_without_groq(self):
         client = MagicMock()
         def hosted_call(route, data=None):
