@@ -90,7 +90,7 @@ The current `skills-v6-esco-1.2.0` taxonomy preserves the curated project skills
 and directional implications, with a small reviewed set of exact English aliases
 from ESCO. Broader ESCO terms were not enabled as automatic matches because that
 would add ambiguous and overly general requirements without human validation.
-The deterministic-v7 scorer also recognizes explicit developer-tooling,
+The deterministic-v8 scorer also recognizes explicit developer-tooling,
 infrastructure, workflow-automation, AI, and software-lifecycle capabilities.
 CI/CD supplies partial transferable evidence for developer tooling, automation,
 and lifecycle work; it does not prove coding-agent, monorepo, or cloud-development
@@ -116,7 +116,8 @@ skill components. Unmatched generated phrases do not become missing skills or
 trigger hard caps; their source clauses remain in manual review. Named technology
 requirements extracted directly from the posting retain their missing-skill
 checks. Exact, implied, and validated fuzzy evidence is resolved before applying
-this rule, and partially supported assisted clauses remain flagged for review.
+this rule. Partially supported assisted clauses remain flagged for review and
+do not change skill-component denominators; their detected matches remain visible.
 This service uses the ESCO classification of the European Commission. The
 Jobspresso taxonomy is an adapted version of selected ESCO labels.
 

@@ -37,6 +37,17 @@ class DeterministicScoringTests(unittest.TestCase):
         self.assertEqual(result["requirement_coverage"]["recognized"], 0)
         self.assertEqual(result["requirement_coverage"]["needs_review"], [clause])
 
+    def test_partial_assistance_does_not_dilute_other_required_evidence(self):
+        clause = "Experience owning performance, quality and responsiveness in a production app"
+        resume = "Experience\nBuilt Android applications.\nProjects\nBenchmarked audio quality."
+        jd = "Requirements\nAndroid development\n" + clause
+        baseline = scoring.score(resume, jd, 0.5, as_of_date=date(2026, 11, 16))
+        assisted = scoring.score(resume, jd, 0.5, as_of_date=date(2026, 11, 16),
+            requirement_assessments={clause: ["Performance", "Quality", "Responsiveness", "Production app"]})
+        self.assertEqual(assisted["score"], baseline["score"])
+        self.assertEqual(assisted["components"], baseline["components"])
+        self.assertEqual(assisted["requirement_coverage"]["needs_review"], [clause])
+
     def test_assisted_fuzzy_evidence_is_resolved_before_filtering_terms(self):
         clause = "Experience building identity platforms"
         term = "identity platform development"
@@ -147,7 +158,7 @@ class DeterministicScoringTests(unittest.TestCase):
         self.assertEqual(result["score"], 88)
         self.assertEqual(result["components"]["must_have"], 1.0)
         self.assertEqual(result["matched"][0]["type"], "exact")
-        self.assertEqual(result["scorer_version"], "deterministic-v7")
+        self.assertEqual(result["scorer_version"], "deterministic-v8")
 
     def test_cache_version_changes_daily_only_for_current_experience(self):
         static_resume = "Experience\nPython developer | Jan 2020 - Dec 2022"

@@ -9,7 +9,7 @@ from datetime import date
 from backend import matching_extraction as extraction
 
 
-SCORER_VERSION = "deterministic-v7"
+SCORER_VERSION = "deterministic-v8"
 WEIGHTS_VERSION = "weights-v2"
 WEIGHTS = {
     "must_have": 40,
@@ -263,12 +263,12 @@ def score(resume_text, jd_text, semantic_similarity, *, job_title="", as_of_date
             continue
         if any(skill not in resume_mentions for skill in item["skills"] + item["unknown_skills"]):
             assisted_needs_review.add(item["text"])
-        # Generated competency labels are suggestions, not proof of a missing
-        # qualification. Resolve exact/implied/fuzzy evidence first; retain
-        # original named-technology gaps, and expose unresolved clauses for review.
-        item["skills"] = [skill for skill in item["skills"] if skill in resume_mentions]
-        item["unknown_skills"] = [skill for skill in item["unknown_skills"]
-                                  if skill in original_assisted_unknowns[item["text"]] or skill in resume_mentions]
+            # A partially assessed clause must not dilute other skill evidence.
+            # Keep its detected matches visible, but score only original named
+            # technologies until the entire generated mapping is supported.
+            item["skills"] = []
+            item["unknown_skills"] = [skill for skill in item["unknown_skills"]
+                                      if skill in original_assisted_unknowns[item["text"]]]
     must_skills = sorted({skill for item in requirements if item["priority"] == "must_have"
                           for skill in item["skills"]})
     must_unknown_skills = sorted({skill for item in requirements if item["priority"] == "must_have"
