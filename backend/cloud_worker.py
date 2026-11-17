@@ -489,7 +489,7 @@ def register_routes(application, connection, database):
             AND (NOT EXISTS(SELECT 1 FROM user_settings WHERE user_id=? AND subscriptions_configured=1)
                  OR EXISTS(SELECT 1 FROM company_subscriptions WHERE user_id=? AND company_id=c.id))
             ORDER BY j.id LIMIT ?""", (job_after, user["id"], user["id"], MAX_WORK_ITEMS)).fetchall()
-        eligible = {job["id"] for job in pipeline.filter_jobs_for_user(scanned, user)}
+        eligible = {job["id"] for job in pipeline.filter_jobs_for_user(scanned, pipeline.account_filtering_user(conn, user))}
         items, last = [], job_after
         for job in scanned:
             if job["id"] in eligible:
@@ -521,7 +521,7 @@ def register_routes(application, connection, database):
                 return {"error": "Inputs changed; result discarded"}, 409
             if job["company_id"] not in matching_tasks.companies_for_user(conn, user_id):
                 return {"error": "Subscription changed; result discarded"}, 409
-            if not pipeline.filter_jobs_for_user([job], user):
+            if not pipeline.filter_jobs_for_user([job], pipeline.account_filtering_user(conn, user)):
                 return {"error": "Job is no longer eligible"}, 409
             value = similarity.validate_result(data.get("result"), user["resume_text"], pipeline.extract_job_description(job))
             conn.execute("""INSERT INTO local_similarity(user_id,job_id,resume_hash,job_hash,preferences_hash,
@@ -554,7 +554,7 @@ def register_routes(application, connection, database):
             if profile is None or role_titles.match_index(job["title"], profile) is None:
                 return {"error": "Job title requires review; result discarded"}, 409
             filtering_user = role_titles.filtering_user(user, profile)
-            if not pipeline.filter_jobs_for_user([job], filtering_user):
+            if not pipeline.filter_jobs_for_user([job], pipeline.account_filtering_user(conn, filtering_user)):
                 return {"error": "Job preferences changed; result discarded"}, 409
             existing = conn.execute("SELECT is_stale FROM scores WHERE user_id=? AND job_id=?", (user_id, job_id)).fetchone()
             if existing and not existing[0]:

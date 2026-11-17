@@ -139,6 +139,10 @@ def create_app(database_path=None, upload_dir=None):
         from datetime import date
         resume_text = g.user["resume_text"]
         jd_text = payload["job_description"]
+        from backend import locations, pipeline_skeleton
+        filtering_user = pipeline_skeleton.account_filtering_user(connection(), g.user)
+        if filtering_user['_admin_india_only'] and not locations.india_work_eligible('', jd_text):
+            return jsonify(error="The job does not confirm India work eligibility."), 400
         resume_hash = deterministic_store.content_hash(resume_text)
         jd_hash = deterministic_store.content_hash(jd_text)
         parsed_jd_hash = deterministic_store.parsed_jd_hash(jd_text, deterministic_scoring.extraction.PARSER_VERSION)
@@ -474,6 +478,20 @@ def create_app(database_path=None, upload_dir=None):
             if any(value not in ("internship", "full-time", "part-time") for value in types):
                 raise ValueError("Invalid employment preference")
             preferences["employment_types"] = types
+            admin_filter_submitted = ('admin_india_filter_present' in request.form or 'admin_india_only' in request.form)
+            if admin_filter_submitted:
+                if not g.account['is_admin']:
+                    raise ValueError('The India work-location filter is available only to administrators')
+                if (request.form.getlist('admin_india_filter_present') != ['1']
+                        or request.form.getlist('admin_india_only') not in ([], ['on'])):
+                    raise ValueError('Invalid administrator location filter')
+                if request.form.get('admin_india_only') == 'on':
+                    preferences['admin_india_only'] = True
+            elif g.account['is_admin'] and 'admin_india_only' in data['preferences']:
+                if type(data['preferences']['admin_india_only']) is not bool:
+                    raise ValueError('Invalid administrator location filter')
+                if data['preferences']['admin_india_only']:
+                    preferences['admin_india_only'] = True
             if request.form.get('family_mode')=='custom':
                 families=[]
                 for index in range(role_titles.MAX_FAMILIES):

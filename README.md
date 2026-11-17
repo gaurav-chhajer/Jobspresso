@@ -378,6 +378,16 @@ Windows email-only installer remains unchanged and does not fetch or score.
 
 ### Run frequent hosted checks from your computer
 
+Administrators have a default-off Settings checkbox, **Only India-based jobs or
+remote jobs open to India**. Enabling it restricts that administrator's job-detail
+fetching and scoring to India locations and remote roles explicitly permitting
+India or worldwide work. Unspecified remote eligibility is excluded; explicit
+country restrictions take precedence. Eligibility is checked again after job
+details resolve. This is a conservative text-based filter, not confirmation of
+work authorization. Shared catalogue ingestion stays global. Other accounts keep
+their own preferences; server-side account roles control access to this option.
+The toggle uses existing preferences storage and requires no migration.
+
 #### Role-title discovery with Tavily
 
 To diagnose an empty Groq queue, run the read-only report against the authoritative

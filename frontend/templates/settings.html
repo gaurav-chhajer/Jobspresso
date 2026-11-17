@@ -20,6 +20,11 @@
 <label class="field"><span class="inputbox"><input name="min_score" type="number" min="0" max="100" value="{{ settings.min_score }}" required placeholder=" "><span class="input-label">Minimum email match</span><i aria-hidden="true"></i></span></label></div>
 <label class="chk"><input type="checkbox" name="include_gaps" {% if settings.include_gaps %}checked{% endif %}>Include gaps in email summaries</label></section>
 <section class="card prefs" id="preferences" data-settings-pane="profile" aria-labelledby="prefs-title"><h2 id="prefs-title">Job preferences</h2><p class="sub">The matching pipeline currently targets student and entry-level roles.</p>
+{% if is_account_admin %}
+<input type="hidden" name="admin_india_filter_present" value="1">
+<label class="chk"><input id="admin-india-only" type="checkbox" name="admin_india_only" {% if preferences.get('admin_india_only',false) %}checked{% endif %} aria-describedby="admin-india-help">Only India-based jobs or remote jobs open to India</label>
+<p class="sub" id="admin-india-help">Applies to your job-detail fetching and scoring. Remote jobs must explicitly allow work from India or worldwide; unclear eligibility is excluded. Other users keep their own preferences.</p>
+{% endif %}
 {% set selected_locations = preferences.get('locations',[]) %}
 <div class="prefs-grid">
 <div class="pf" id="roles-picker"><label class="pf-label" for="roles-input">Target roles</label>

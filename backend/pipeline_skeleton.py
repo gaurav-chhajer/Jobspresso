@@ -13,7 +13,7 @@ requests) should reuse what you already built in ats_board_finder.py.
 """
 
 import sqlite3
-from backend.locations import matches as location_matches
+from backend.locations import matches as location_matches, india_work_eligible
 import json
 import os
 import smtplib
@@ -415,6 +415,37 @@ def _meets_min_stipend(job, min_stipend):
     return amount >= min_stipend
 
 
+def account_filtering_user(conn, user_row):
+    """Attach geographic policy from trusted account state, never from a client flag."""
+    result = dict(user_row, _admin_india_only=False)
+    # Legacy local databases have no account roles and therefore no administrators.
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='accounts'").fetchone() is None:
+        return result
+    account = conn.execute('SELECT is_admin FROM accounts WHERE user_id=?', (user_row['id'],)).fetchone()
+    if account is None or account[0] != 1:
+        return result
+    preferences = json.loads(user_row['preferences_json'] or '{}')
+    if not isinstance(preferences, dict) or type(preferences.get('admin_india_only', False)) is not bool:
+        raise ValueError('Invalid administrator location preference')
+    result['_admin_india_only'] = preferences.get('admin_india_only', False)
+    return result
+
+
+def _admin_india_job_eligible(job):
+    raw = json.loads(job['raw_json'] or '{}')
+    if not isinstance(raw, dict):
+        raise ValueError('Stored job JSON must be an object')
+    parts = [_clean_description(raw.get(key)) for key in
+             ('descriptionPlain', 'descriptionBodyPlain', 'openingPlain', 'additionalPlain')]
+    parts.extend(_clean_description(raw.get(key), html=True) for key in
+                 ('content', 'description', 'descriptionHtml', 'descriptionBody', 'opening', 'additional'))
+    for section in raw.get('lists') or []:
+        if isinstance(section, dict):
+            parts.append(_clean_description(section.get('text')))
+            parts.append(_clean_description(section.get('content'), html=True))
+    return india_work_eligible(job['location'], '\n'.join(part for part in parts if part))
+
+
 def filter_candidate_jobs(conn, user_row):
     """
     Pre-scoring filter for a student/fresh-grad audience. Runs two layers
@@ -441,12 +472,13 @@ def filter_candidate_jobs(conn, user_row):
         """,
         (user_row["id"], user_row["id"], user_row["id"]),
     )
-    return filter_jobs_for_user(cur.fetchall(), user_row)
+    return filter_jobs_for_user(cur.fetchall(), account_filtering_user(conn, user_row))
 
 
 def filter_jobs_for_user(all_candidates, user_row):
     """Apply the same preference checks to a bounded page or a full candidate list."""
     prefs = _parse_preferences(user_row)
+    admin_india_only = dict(user_row).get('_admin_india_only', False)
 
     filtered = []
     excluded_senior = 0
@@ -455,6 +487,9 @@ def filter_jobs_for_user(all_candidates, user_row):
     excluded_stipend = 0
 
     for job in all_candidates:
+        if admin_india_only and not _admin_india_job_eligible(job):
+            excluded_location += 1
+            continue
         if prefs.get("employment_types"):
             raw = json.loads(job["raw_json"] or "{}")
             employment = str(raw.get("employmentType") or (raw.get("categories") or {}).get("commitment") or "").lower()
