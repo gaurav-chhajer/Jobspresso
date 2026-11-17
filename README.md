@@ -1083,6 +1083,11 @@ existing private `data/` and `.env`, takes the pipeline lock, backs up the SQLit
 database before pending migrations, checks application startup in a separate
 process, and then records the active revision. The previous release remains on
 disk and is served if extraction, migration, or the isolated startup check fails.
+If hosting disk quota is exhausted, reclaim only explicitly approved archived
+code before retrying. A partial `.releases/<commit>.staging` directory is retained
+for inspection and blocks reuse of that commit's extraction directory. Preserve
+it and deploy a fresh reviewed commit, or obtain approval for scoped staging
+cleanup. Never include shared `data` or `.env` links in archived-code cleanup.
 An unexpected failure during the final in-process import requires a new reload
 after the cause is fixed. Application data and credentials remain
 in `/home/GauravChhajer/StudentConnect`.
