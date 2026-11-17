@@ -30,8 +30,9 @@ class DeterministicScoringTests(unittest.TestCase):
         resume = 'Skills\nArtificial intelligence, Python, SQL\nExperience\nBuilt Python services for data analysis.'
         result = scoring.score(resume, 'Requirements\n' + clause, 0.6, as_of_date=date(2026, 11, 16))
         self.assertNotIn('You', result['must_have_unknown_skills'])
-        self.assertEqual(result['missing_must_have'], [])
-        self.assertEqual(result['missing_must_have_requirements'], [])
+        self.assertEqual(result['missing_must_have'], ['Statistics'])
+        self.assertTrue(all('statistical analysis' in item['jd']
+                            for item in result['missing_must_have_requirements']))
 
     def test_unsupported_assisted_phrases_do_not_become_missing_skills(self):
         resume = "Experience\nShipped Android features using Kotlin.\nSkills\nJetpack Compose"
@@ -98,7 +99,7 @@ class DeterministicScoringTests(unittest.TestCase):
         for key in ("score", "components", "component_points", "requirement_coverage", "missing_must_have"):
             self.assertEqual(located[key], result[key], key)
         self.assertEqual(result["weights"]["nice_to_have"], 10)
-        self.assertEqual(result["weights"]["must_have"], 40)
+        self.assertEqual(result["weights"]["must_have"], 30)
         self.assertIn("A/B testing", result["missing_must_have"])
         self.assertNotIn("Infrastructure engineering", result["missing_must_have"])
         self.assertNotIn("Audio playback", {item.get("skill") for item in result["matched"]})
@@ -181,10 +182,10 @@ class DeterministicScoringTests(unittest.TestCase):
         self.assertEqual(sum(scoring.WEIGHTS.values()), 100)
         self.assertEqual(result, scoring.score(resume, jd, 0.8, job_title="Software Engineer",
                                                as_of_date=date(2026, 11, 11)))
-        self.assertEqual(result["score"], 88)
+        self.assertEqual(result["score"], 100)
         self.assertEqual(result["components"]["must_have"], 1.0)
         self.assertEqual(result["matched"][0]["type"], "exact")
-        self.assertEqual(result["scorer_version"], "deterministic-v10")
+        self.assertEqual(result["scorer_version"], "deterministic-v18")
 
     def test_cache_version_changes_daily_only_for_current_experience(self):
         static_resume = "Experience\nPython developer | Jan 2020 - Dec 2022"
@@ -260,7 +261,8 @@ class DeterministicScoringTests(unittest.TestCase):
         self.assertEqual(result["missing_must_have"], ["Kubernetes", "SQL"])
         self.assertTrue(result["hard_cap_applied"])
         self.assertLessEqual(result["score"], 60)
-        self.assertEqual(result["components"]["semantic"], 0.9)
+        # Topical similarity alone cannot establish the two missing capabilities.
+        self.assertAlmostEqual(result["components"]["semantic"], 1 / 3, places=4)
 
     def test_missing_required_experience_counts_toward_the_hard_cap(self):
         resume = "Experience\nPython developer | Jan 2024 - Dec 2024"
@@ -269,7 +271,7 @@ class DeterministicScoringTests(unittest.TestCase):
         self.assertTrue(result["hard_cap_applied"])
         self.assertEqual(result["missing_must_have_criterion_count"], 1)
         self.assertEqual(result["missing_must_have_requirements"][0]["reason"], "experience_years")
-        self.assertGreater(result["score"], 40)
+        self.assertEqual(result["score"], 37)
         self.assertLessEqual(result["score"], 60)
         self.assertTrue(result["experience_hard_cap_applied"])
 
@@ -315,7 +317,7 @@ class DeterministicScoringTests(unittest.TestCase):
         jd = "Requirements\nAt least 4 years experience\nMaster's degree required"
         result = scoring.score(resume, jd, 0.6, job_title="Senior Data Engineer", as_of_date=date(2026, 11, 11))
         self.assertEqual(result["components"]["experience"], 0.5)
-        self.assertEqual(result["components"]["education_title"], 0.35)
+        self.assertEqual(result["components"]["education_title"], 0.0)
 
     def test_implied_skill_and_education_matches_include_source_lines(self):
         resume = "Skills\nNeural networks\nEducation\nB.Tech in Computer Science"

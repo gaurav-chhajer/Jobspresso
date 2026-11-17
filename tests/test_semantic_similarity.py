@@ -31,6 +31,24 @@ class SemanticSimilarityTests(unittest.TestCase):
         self.assertLess(baseline, 1)
         self.assertFalse(any("GMT" in text or "stipend" in text for text, _ in scorer.calls))
 
+    def test_company_success_and_application_narrative_do_not_enter_semantic_fit(self):
+        scorer = FakeScorer({"Kotlin project": vector(1), "Kotlin and Android experience": vector(1)})
+        resume = "Projects\nKotlin project"
+        core = "You Might Be a Fit If\nKotlin and Android experience"
+        noisy = ("About Rare Candy\nAI-powered card marketplace\n" + core +
+                 "\nWhat Success Looks Like\nBuild a joyful collector community\n"
+                 "A Day in Your Life\nYour work goes directly to users\n"
+                 "How to Apply\nDescribe an Android feature")
+        baseline = semantic.section_similarity(resume, core, scorer,
+                                               resume_owner="resume", jd_owner="job")
+        with_noise = semantic.section_similarity(resume, noisy, scorer,
+                                                 resume_owner="resume", jd_owner="job")
+        self.assertEqual(baseline, with_noise)
+        self.assertEqual([text for text, _ in scorer.calls].count("Kotlin and Android experience"), 2)
+        self.assertFalse(any("marketplace" in text or "collector community" in text or
+                             "goes directly" in text or "Describe an Android" in text
+                             for text, _ in scorer.calls))
+
     def test_sections_compare_each_jd_section_to_best_resume_section(self):
         scorer = FakeScorer({
             "Python role": vector(1), "SQL project": vector(0, 1),

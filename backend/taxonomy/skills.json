@@ -1,9 +1,29 @@
 {
-  "taxonomy_version": "skills-v6-esco-1.2.0",
+  "taxonomy_version": "skills-v12-esco-1.2.0",
   "source": "Curated Jobspresso taxonomy with selected exact English alternate labels adapted from ESCO v1.2.0",
   "skills": {
     "Python": [
       "python"
+    ],
+    "Programming": [
+      "programming",
+      "coding"
+    ],
+    "Recruiting": [
+      "recruiting",
+      "recruitment",
+      "talent acquisition",
+      "candidate screening"
+    ],
+    "Customer success": ["customer success"],
+    "Account management": ["strategic account management", "enterprise account management"],
+    "Program management": ["program management", "change management"],
+    "Embedded systems": ["embedded development", "embedded systems", "firmware", "rtos", "board bring-up"],
+    "Debt collections": [
+      "debt collections",
+      "lending collections",
+      "collections strategy",
+      "delinquency management"
     ],
     "Java": [
       "java"
@@ -31,6 +51,22 @@
       "sql",
       "sequel"
     ],
+    "SQLite": ["sqlite"],
+    "Spark": ["apache spark", "pyspark", "spark"],
+    "Airflow": ["apache airflow", "airflow"],
+    "Cassandra": ["apache cassandra", "cassandra"],
+    "People management": [
+      "managing engineering teams",
+      "managing software development teams",
+      "manage engineers",
+      "developing senior engineers",
+      "people management",
+      "managing people managers"
+    ],
+    "Backend engineering": ["backend engineering", "back-end engineering", "backend development", "backend engineer"],
+    "Game development": ["video games industry", "game development"],
+    "Wireless networking": ["wifi software development", "802.11", "wireless drivers", "network stack internals"],
+    "Causal inference": ["causal inference"],
     "PostgreSQL": [
       "postgresql",
       "postgres"
@@ -139,7 +175,9 @@
       "data analytics"
     ],
     "Statistics": [
-      "statistics"
+      "statistics",
+      "statistical analysis",
+      "statistical inference"
     ],
     "REST": [
       "rest",
@@ -165,7 +203,9 @@
       "financial modeling"
     ],
     "Sales": [
-      "sales"
+      "sales",
+      "selling experience",
+      "closing business"
     ],
     "Marketing": [
       "marketing"
@@ -210,6 +250,9 @@
     ],
     "Android": [
       "android"
+    ],
+    "iOS": [
+      "ios"
     ],
     "Jetpack Compose": [
       "jetpack compose",
@@ -289,7 +332,8 @@
     ],
     "A/B testing": [
       "a/b testing",
-      "a/b tests"
+      "a/b tests",
+      "a/b experiments"
     ],
     "Audio playback": [
       "audio playback"
@@ -305,6 +349,17 @@
     ]
   },
   "implies": {
+    "Python": ["Programming"],
+    "Java": ["Programming"],
+    "JavaScript": ["Programming"],
+    "TypeScript": ["Programming"],
+    "Kotlin": ["Programming"],
+    "Swift": ["Programming"],
+    "C++": ["Programming"],
+    "C#": ["Programming"],
+    "Go": ["Programming"],
+    "Rust": ["Programming"],
+    "Scala": ["Programming"],
     "Neural networks": [
       "Machine learning"
     ],
@@ -321,7 +376,8 @@
       "Python"
     ],
     "Flask": [
-      "Python"
+      "Python",
+      "Backend engineering"
     ],
     "Pandas": [
       "Python"
@@ -346,12 +402,19 @@
     ],
     "Machine learning": [
       "Artificial intelligence"
+    ],
+    "Causal inference": [
+      "Statistics"
     ]
   },
   "blocked_pairs": [
     [
       "Java",
       "JavaScript"
+    ],
+    [
+      "Android",
+      "iOS"
     ]
   ]
 }

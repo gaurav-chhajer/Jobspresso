@@ -138,7 +138,7 @@ class WebFlowTests(unittest.TestCase):
                                             headers={"X-CSRF-Token": token})
                 self.assertEqual(response.status_code, 200)
                 result = response.get_json()
-                self.assertEqual(result["score"], 57)
+                self.assertEqual(result["score"], 31)
                 self.assertEqual(result["weights"]["nice_to_have"], 0)
                 self.assertIn("components", result)
                 self.assertIn("explanation", result)

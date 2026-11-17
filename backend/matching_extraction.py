@@ -26,7 +26,7 @@ TAXONOMY_VERSION = _TAXONOMY["taxonomy_version"]
 IMPLIES = {source: tuple(targets) for source, targets in _TAXONOMY["implies"].items()}
 BLOCKED_SKILL_PAIRS = frozenset(frozenset(pair) for pair in _TAXONOMY["blocked_pairs"])
 FUZZY_SKILL_THRESHOLD = 0.92
-PARSER_VERSION = "jd-requirements-v9"
+PARSER_VERSION = "jd-requirements-v24"
 
 
 _SECTION_NAMES = {
@@ -41,32 +41,51 @@ _SECTION_NAMES = {
     "requirements": ("requirements", "qualifications", "key requirements", "required skills", "who you are",
                      "what sets you apart", "skills you'll need to bring",
                      "minimum qualifications", "basic qualifications", "must have", "must haves", "what you will need", "what you'll need",
-                     "what we are looking for", "what we're looking for", "required qualifications"),
+                     "what we are looking for", "what we're looking for", "required qualifications",
+                     "you might be a fit if", "you might be a good fit if", "you may be a fit if",
+                     "what you'll need to thrive here", "about you",
+                     "we'd love to hear from you if you have", "qualifications and skills",
+                     "key skills & competencies", "required skills and qualifications",
+                     "what are we looking for", "must have qualifications", "the experience we need",
+                     "what you'll bring to the role", "what do we expect from you",
+                     "expectations/ requirements", "essential skills", "qualifications and education requirements",
+                     "skills that will help you succeed in this role", "superpowers/ skills that will help you succeed in this role"),
     "non_requirements": ("benefits", "benefits & perks", "benefits and perks", "perks", "compensation",
                           "salary", "pay", "what we have to offer", "what we offer", "our benefits",
                           "data privacy notice", "privacy notice", "privacy policy", "equal opportunity",
                           "a note on ai", "equal opportunity & accommodations", "why this role is unique",
-                          "location", "locations", "work location", "remote", "remote-first"),
+                          "what success looks like", "success looks like", "a day in your life",
+                          "a day in the life", "day in your life", "day in the life",
+                          "how to apply", "application process", "why join us now", "why join us",
+                          "location", "locations", "work location", "remote", "remote-first",
+                          "where you'll be", "pay transparency disclosure", "a note on compensation",
+                          "your sales environment", "compensation, perks & benefits", "why you'll love it here",
+                          "recruitment fraud alert", "recruiting security"),
     "responsibilities": ("responsibilities", "what you will do", "what you'll do", "the role",
-                          "about the role"),
-    "nice_to_have": ("additional experience (not required)", "optional", "optional (not required)", "good to have", "nice-to-have", "preferred", "preferred qualifications", "preferred skills", "nice to have", "nice to haves", "nice-to-haves", "bonus", "bonus points",
-                      "additional qualifications"),
+                          "about the role", "job responsibilities", "key responsibilities",
+                          "key job responsibilities", "core responsibilities", "what you'll be doing",
+                          "what will you be doing", "role and responsibilities", "what you'll achieve",
+                          "daily adventures & responsibilities"),
+    "nice_to_have": ("additional experience (not required)", "optional", "optional (not required)", "good to have", "good-to-have skills", "nice-to-have", "preferred", "preferred qualification", "preferred qualifications", "preferred skills", "nice to have", "nice to haves", "nice-to-haves", "bonus", "bonus points",
+                      "additional qualifications", "we'd especially love to talk if you have experience in"),
     "certifications": ("certifications", "certificates"),
 }
 _HEADER_LOOKUP = {alias: name for name, aliases in _SECTION_NAMES.items() for alias in aliases}
 _NON_REQUIREMENTS_HEADING = re.compile(
-    r"^(?:how\s+.{1,80}\s+works|why\s+apply\s+through\s+.{1,80})[?!:.\s]*$", re.I)
+    r"^(?:how\s+.{1,80}\s+works|why\s+apply\s+through\s+.{1,80}|"
+    r"about\s+(?!(?:the\s+)?(?:role|job|position|opportunity|team|you)\b)"
+    r"[a-z0-9][a-z0-9&'. -]{0,70})[?!:.\s]*$", re.I)
 _ATS_METADATA = re.compile(r"#LI-[A-Z0-9-]+", re.I)
 _MUST_CUE = re.compile(r"\b(?:must|required|mandatory|essential|minimum|at least|need to|needs to)\b", re.I)
-_NICE_CUE = re.compile(r"\b(?:preferred|nice to have|bonus|a plus|would be a plus|desirable|ideally)\b", re.I)
+_NICE_CUE = re.compile(r"\b(?:preferred|preferably|nice to have|bonus|a plus|would be a plus|desirable|ideally)\b", re.I)
 _YEAR_RANGE = re.compile(
-    r"\b(\d{1,2}(?:\.\d{1,2})?)(?:\s*(?:-|to)\s*\d{1,2}(?:\.\d{1,2})?|\s*\+)?\s*(?:years?|yrs?)\b",
+    r"\b(\d{1,2}(?:\.\d{1,2})?)(?:\s*(?:[-\u2013\u2014]\s*(?:to\s*)?|to\s*)\d{1,2}(?:\.\d{1,2})?\+?|\s*\+|\s+or more)?\]?\s*(?:years?|yrs?)\b",
     re.I,
 )
 _EDUCATION_PATTERNS = (
     ("doctorate", re.compile(r"\b(?:ph\.?d\.?|doctor(?:ate)?|doctoral)\b", re.I)),
-    ("masters", re.compile(r"(?<!\w)(?:master'?s|master of|m\.?\s?sc\.?|m\.?e\.?(?=\s+in\b|\s+[A-Z])|m\.?s\.?(?=\s+in\b|\s*\()|m\.?tech|mba|mca|post[ -]?graduate)(?!\w)", re.I)),
-    ("bachelors", re.compile(r"(?<!\w)(?:bachelor'?s|bachelor of|b\.?s\.?(?=\s+in\b|\s*\()|b\.?\s?sc\.?|b\.?e\.?(?=\s+in\b|\s+[A-Z])|b\.?tech|bca|bba|b\.?com|undergraduate)(?!\w)", re.I)),
+    ("masters", re.compile(r"(?<!\w)(?:master'?s|master of|m\.?\s?sc\.?|(?:m\.e\.?|(?-i:ME))(?=\s+in\b|\s+[A-Z])|m\.?s\.?(?=\s+in\b|\s*\()|m\.?tech|mba|mca|post[ -]?graduate)(?!\w)", re.I)),
+    ("bachelors", re.compile(r"(?<!\w)(?:bachelor'?s|bachelor of|b\.?s\.?(?=\s+in\b|\s*\()|b\.?\s?sc\.?|(?:b\.e\.?|(?-i:BE))(?=\s+in\b|\s+[A-Z])|b\.?tech|bca|bba|b\.?com|undergraduate)(?!\w)", re.I)),
     ("diploma", re.compile(r"\b(?:diploma|associate degree)\b", re.I)),
 )
 _EDUCATION_FIELDS = {
@@ -88,7 +107,7 @@ _SENIORITY_PATTERNS = (
     ("management", re.compile(r"\b(?:manager|director|head of|vice president)\b", re.I)),
 )
 _SECTION_CREDIT = {"experience": 0.75, "projects": 0.75, "skills": 0.4, "summary": 0.4}
-_WORK_ACTION = re.compile(r"\b(?:built|building|developed|implemented|deployed|created|wrote|designed|maintained|delivered|optimized|automated|reduced|improved|used|using)\b", re.I)
+_WORK_ACTION = re.compile(r"\b(?:built|building|developed|implemented|deployed|created|wrote|designed|maintained|delivered|optimized|automated|reduced|improved|increased|ingested|ranked|secured|shipped|benchmarked|used|using)\b", re.I)
 _DATE_PART = r"(?:0?[1-9]|1[0-2])/\d{4}|[A-Za-z]{3,9}\.?\s*'\d{2}|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sept?(?:ember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+\d{4}|\d{4}"
 _DATE_RANGE = re.compile(
     r"(?<!\d)(?P<start>" + _DATE_PART + r")\s*(?:-|\u2013|\u2014|to)\s*"
@@ -110,9 +129,14 @@ def normalize_text(value):
 
 def _section_header(line):
     line = line.replace("\u2019", "'")
+    line = re.sub(r"^\s*\d+[.)]\s*", "", line)
     cleaned = re.sub(r"^[\s#>*\u2022\-]+|[\s:?!\uff1a]+$", "", line).casefold()
     cleaned = re.sub(r"\s+", " ", cleaned)
     cleaned = re.sub(r"\s*\((?:must[- ]?haves?|requirements?|required)\)\s*$", "", cleaned)
+    if re.fullmatch(r"while (?:it'?s )?not required,? (?:it'?s )?an added plus if you also have", cleaned):
+        return "nice_to_have"
+    if re.fullmatch(r"what you(?:'ll| will) do at [a-z0-9 &'.-]{1,80}", cleaned):
+        return "responsibilities"
     if _NON_REQUIREMENTS_HEADING.fullmatch(cleaned):
         return "non_requirements"
     return _HEADER_LOOKUP.get(cleaned)
@@ -162,8 +186,9 @@ _SKILL_PATTERNS = tuple(
         ("Python", "Python3"), ("JavaScript", "JS"), ("TypeScript", "TS"),
         ("Vue", "VueJS"), ("Angular", "AngularJS"), ("HTML", "html5"),
         ("CI/CD", "CICD"), ("MongoDB", "Mongo"), ("Node.js", "Node JS"))),
-    ("Go", "Go", re.compile(r"(?<![\w+#.])Go(?![\w+#])", re.I)),
+    ("Go", "Go", re.compile(r"(?<![\w+#.])(?:Go|GO)(?![\w+#])")),
     ("Machine learning", "ML", _skill_pattern("ML")),
+    ("Machine learning", "fine-tuned", re.compile(r"\bfine[- ]tun(?:ed|ing)\b", re.I)),
     ("Git", "GitHub", _skill_pattern("GitHub")),
     ("CI/CD", "Jenkins pipelines", re.compile(r"\bJenkins\s+pipelines?\b", re.I)),
     ("CI/CD", "GitHub Actions", re.compile(r"\bGitHub\s+Actions\b", re.I)),
@@ -183,7 +208,7 @@ _UNKNOWN_STOPWORDS.update({"code", "context", "hands", "how", "jobgether", "prot
 _UNKNOWN_STOPWORDS.update({"you", "your", "yours", "yourself", "yourselves", "we", "our", "ours", "ourselves",
                           "they", "their", "theirs", "them", "themselves", "he", "his", "him", "himself",
                           "she", "her", "hers", "herself", "it", "its", "itself", "this", "that", "these", "those"})
-_AMBIGUOUS_SKILLS = frozenset(("Go", "Excel", "REST", "React", "Spring", "Swift", "Room", "Sales", "Marketing",
+_AMBIGUOUS_SKILLS = frozenset(("Go", "Excel", "REST", "React", "Spring", "Swift", "Room", "Sales", "Marketing", "Spark", "Airflow", "Cassandra",
                               "Infrastructure engineering"))
 _TECHNICAL_CONTEXT = re.compile(
     r"\b(?:developer|engineer|programmer|software|framework|api|database|programming|application|app|"
@@ -201,7 +226,7 @@ _JD_BOILERPLATE = re.compile(
     r"takes your privacy seriously|in accordance with applicable data protection laws|"
     r"for any inquiries related to data privacy|explore more opportunities at\s*:?)\b", re.I)
 _BUSINESS_SKILL_CONTEXT = {
-    "Sales": re.compile(r"\b(?:sales (?:strategy|pipeline|operations|process|experience|targets?)|selling)\b", re.I),
+    "Sales": re.compile(r"\b(?:sales (?:strategy|pipeline|operations|process|experience|targets?|role|closing|cycle|career)|selling)\b", re.I),
     "Marketing": re.compile(r"\b(?:marketing (?:campaigns?|strategy|operations|experience)|digital marketing|content marketing|seo)\b", re.I),
 }
 _QUALIFICATION_INTRO = re.compile(
@@ -222,8 +247,13 @@ def extract_skill_mentions(text, *, all_mentions=False, section_context=None):
         if section["name"] == "non_requirements":
             continue
         effective_section = section_context or section["name"]
-        for line_offset, line in enumerate(section["text"].splitlines()):
+        section_lines = section["text"].splitlines()
+        for line_offset, line in enumerate(section_lines):
             line = " ".join(unicodedata.normalize("NFKC", line).translate(dict.fromkeys(map(ord, "\u200b\u200c\u200d\ufeff\u00ad"))).split())
+            project_stack = (section["name"] == "projects" and bool(re.search(r"\s[\u2014\u2013|]\s", line))
+                             and line_offset + 1 < len(section_lines)
+                             and bool(_WORK_ACTION.search(section_lines[line_offset + 1]))
+                             and len(extract_skill_mentions(line, section_context="skills")) >= 2)
             for skill, alias, pattern in _SKILL_PATTERNS:
                 match = pattern.search(line)
                 if not match:
@@ -244,7 +274,7 @@ def extract_skill_mentions(text, *, all_mentions=False, section_context=None):
                 if section["name"] in {"experience", "projects"}:
                     if _WORK_ACTION.search(line) and re.search(r"\b\d+(?:\.\d+)?\s*(?:%|percent|users|requests|seconds|ms|hours)\b|\d+%", line, re.I):
                         candidate["evidence_credit"] = 1.0
-                    elif not _WORK_ACTION.search(line):
+                    elif not _WORK_ACTION.search(line) and not project_stack:
                         if not re.search(r"\b(?:services|scripts|applications|pipelines|systems|apis|deployed|production|project|developer|engineer)\b", line, re.I):
                             candidate["evidence_credit"] = 0.1
                 elif (section["name"] == "other" and _WORK_ACTION.search(line) and
@@ -270,6 +300,17 @@ def extract_skill_mentions(text, *, all_mentions=False, section_context=None):
 
 
 def _ambiguous_skill_match_allowed(skill, alias, match, line, section):
+    if skill == "Sales" and alias.casefold() in {"closing business", "selling experience"}:
+        return True
+    if skill == "React" and alias.casefold() in {"react.js", "reactjs"}:
+        return True
+    if skill == "Machine learning" and alias == "fine-tuned":
+        return bool(re.search(r"\b(?:models?|classifiers?|transformers?)\b", line, re.I))
+    if skill == "Figma":
+        # The employer's product name in company copy is not a tool requirement.
+        return (section == "skills" or line.strip().casefold() == "figma" or bool(re.search(
+            r"\b(?:using|used|use|proficiency in|proficient in|experience (?:with|in)|"
+            r"knowledge of|skilled in)\s+Figma\b|\bFigma\s+(?:skills|proficiency|experience)\b", line, re.I)))
     if skill == "Rust" and re.match(r"[- ]proof\b", line[match.end():], re.I):
         return False
     # These labels identify a skill only when the surrounding evidence supports
@@ -293,7 +334,9 @@ def _ambiguous_skill_match_allowed(skill, alias, match, line, section):
     if skill not in _AMBIGUOUS_SKILLS:
         return True
     matched = match.group()
-    if skill in {"Excel", "React", "Spring", "Swift"} and matched[:1].islower():
+    if skill == "React" and matched[:1].islower() and re.search(r"\b(?:frameworks?|javascript|front[- ]?end)\b", line, re.I):
+        return True
+    if skill in {"Excel", "React", "Spring", "Swift", "Spark"} and matched[:1].islower():
         return False
     if skill == "REST" and not (matched.isupper() or alias.casefold() == "restful"):
         return False
@@ -409,6 +452,8 @@ def extract_resume_skill_phrases(resume_text):
 
 
 def _priority(section, line):
+    if re.match(r"\s*you may have (?:worked|experience)\b", line, re.I):
+        return "nice_to_have"
     if re.search(r"\b(?:not required|optional|not mandatory)\b", line, re.I):
         return "nice_to_have"
     if section == "nice_to_have" or _NICE_CUE.search(line):
@@ -451,7 +496,17 @@ def _requirement_clauses(line, section):
 
 
 def _sentence_clauses(text, section):
-    boundary = re.compile(r"[;!?]\s+|(?<=[a-z0-9+#)])\.\s+(?=[A-Z])|\s+-\s+(?=[A-Za-z])|\s+(?=Experience with\b)|,\s+(?=(?:but\s+)?(?:preferred|ideally|nice to have)\b)")
+    optional = [match for match in re.finditer(r"\([^()]{1,500}\)", text)
+                if _NICE_CUE.search(match.group()) or re.search(r"\bnot required\b", match.group(), re.I)]
+    if optional:
+        offset = 0
+        for match in optional:
+            yield from _sentence_clauses(text[offset:match.start()], section)
+            yield match.group(), "nice_to_have"
+            offset = match.end()
+        yield from _sentence_clauses(text[offset:], section)
+        return
+    boundary = re.compile(r"[;!?]\s+|(?<=[a-z0-9+#)])\.\s+(?=[A-Z])|\s+-\s+(?=[A-Za-z])|\s+(?=Experience with\b)|\s+(?=You (?:have|are|must|should|can|will)\b)|,\s+(?=(?:but\s+)?(?:preferred|preferably|ideally|nice to have)\b)")
     offset = 0
     for match in boundary.finditer(text):
         if match.group().startswith(".") and re.search(r"\b(?:e\.g|i\.e|etc)$", text[max(0, match.start() - 8):match.start()], re.I):
@@ -483,6 +538,9 @@ def extract_jd_requirements(text, *, job_title=""):
             if not content or _JD_BOILERPLATE.search(content) or _QUALIFICATION_INTRO.fullmatch(content):
                 continue
             mentions = extract_skill_mentions(content, section_context=clause_section)
+            if re.match(r"^(?:(?:you(?:'re| are)?|are)\s+)?(?:excited to (?:explore|learn)|curious about|curiosity about|willingness to learn)\b",
+                        content, re.I):
+                mentions = []
             years = _minimum_years(content)
             priority = _priority(clause_section, content)
             if not mentions and years is None and priority == "unclassified":
@@ -561,6 +619,39 @@ def extract_education_evidence(text):
     return evidence
 
 
+def education_enrollment_evidence(text, as_of_date):
+    """Return explicit current degree evidence, never infer enrollment from a degree alone."""
+    if not isinstance(text, str) or type(as_of_date) is not date:
+        raise TypeError("Enrollment requires text and a scoring date")
+    current_month = (as_of_date.year, as_of_date.month)
+    evidence = []
+    for section in split_sections(text):
+        if section["name"] != "education":
+            continue
+        lines = section["text"].splitlines()
+        for offset, line in enumerate(lines):
+            if not any(pattern.search(line) for _, pattern in _EDUCATION_PATTERNS):
+                continue
+            # Resume layouts commonly put degree dates immediately above or below
+            # the degree. Do not borrow dates from another degree farther away.
+            adjacent = lines[max(0, offset - 2):offset + 3]
+            ranges = [(abs(index - offset), match) for index in range(max(0, offset - 2), min(len(lines), offset + 3))
+                      for match in _DATE_RANGE.finditer(lines[index])]
+            if ranges:
+                nearest = min(distance for distance, _ in ranges)
+                active = any(_date_month(match.group("start"), ending=False, as_of_date=as_of_date)
+                             <= current_month <=
+                             _date_month(match.group("end"), ending=True, as_of_date=as_of_date)
+                             for distance, match in ranges if distance == nearest)
+            else:
+                active = bool(re.search(r"\b(?:currently (?:pursuing|enrolled|studying)|"
+                                        r"(?:degree|bachelor|master|ph\.?d).{0,30}in progress)\b", line, re.I))
+            if active:
+                degree = extract_education_evidence(line)[0]
+                evidence.append(dict(degree, text=" | ".join(adjacent), line=section["start_line"] + offset))
+    return evidence
+
+
 def expand_implied_skills(mentions):
     """Add only explicitly configured, directional skill implications at partial credit."""
     if not isinstance(mentions, list) or any(not isinstance(item, dict) or item.get("skill") not in SKILLS for item in mentions):
@@ -568,10 +659,13 @@ def expand_implied_skills(mentions):
     expanded = {item["skill"]: dict(item) for item in mentions}
     for source in mentions:
         for implied in IMPLIES.get(source["skill"], ()):
-            if implied not in expanded or min(source["evidence_credit"], 0.4) > expanded[implied]["evidence_credit"]:
+            # Demonstrated language use directly establishes generic programming;
+            # broader domain/tool transfers retain their conservative partial credit.
+            credit = source["evidence_credit"] if implied == "Programming" else min(source["evidence_credit"], 0.4)
+            if implied not in expanded or credit > expanded[implied]["evidence_credit"]:
                 expanded[implied] = dict(source, skill=implied, match_type="implies",
                                          implied_from=source["skill"],
-                                         evidence_credit=min(source["evidence_credit"], 0.4))
+                                         evidence_credit=credit)
     return [expanded[skill] for skill in sorted(expanded)]
 
 

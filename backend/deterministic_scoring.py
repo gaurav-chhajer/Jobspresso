@@ -9,17 +9,22 @@ from datetime import date
 from backend import matching_extraction as extraction
 
 
-SCORER_VERSION = "deterministic-v10"
-WEIGHTS_VERSION = "weights-v2"
+SCORER_VERSION = "deterministic-v18"
+WEIGHTS_VERSION = "weights-v3-clause-rubric"
 WEIGHTS = {
-    "must_have": 40,
+    "must_have": 30,
     "nice_to_have": 10,
-    "semantic": 25,
-    "experience": 15,
+    "semantic": 20,
+    "experience": 30,
     "education_title": 10,
 }
 MISSING_MUST_HAVE_FRACTION = 0.5
 MISSING_MUST_HAVE_SCORE_CAP = 60
+MISSING_DEGREE_SCORE_CAP = 30
+MISSING_SPECIALIST_SCORE_CAP = 30
+MISSING_ENROLLMENT_SCORE_CAP = 40
+SCOPE_CEILING_FLOOR = 25
+SCOPE_SHORTFALL_POINTS_PER_YEAR = 5
 NEUTRAL_COMPONENT = 0.7
 UNOBSERVED_SKILL_COMPONENT = 0.4
 _DEGREE_LEVEL = {"diploma": 1, "bachelors": 2, "masters": 3, "doctorate": 4}
@@ -27,6 +32,8 @@ _SENIORITY_LEVEL = {"intern": 0, "entry": 1, "mid": 2, "senior": 3, "lead": 4, "
 _EDUCATION_REQUIREMENT_CUE = re.compile(
     r"\b(?:degree|education(?:al)?|bachelor(?:'s)?|master(?:'s)?|ph\.?d\.?|doctorate|"
     r"diploma|graduate|undergraduate|postgraduate|major\s+in|field of study)\b", re.I)
+_ENROLLMENT_REQUIREMENT = re.compile(
+    r"\b(?:pursuing|enrolled in|currently studying|current(?:ly)? (?:undergraduate|graduate|student))\b", re.I)
 
 
 def _fraction(value):
@@ -34,10 +41,11 @@ def _fraction(value):
 
 
 def cache_version(resume_text, as_of_date, embedding_revision):
-    """Build a cache key that only changes daily for active experience ranges."""
+    """Include the date when work duration or education eligibility can change."""
     if type(as_of_date) is not date or not isinstance(embedding_revision, str) or not embedding_revision.strip():
         raise ValueError("Cache version inputs are invalid")
-    date_key = as_of_date.isoformat() if extraction.has_current_experience_date(resume_text) else "static"
+    education_date_sensitive = any(section["name"] == "education" for section in extraction.split_sections(resume_text))
+    date_key = as_of_date.isoformat() if extraction.has_current_experience_date(resume_text) or education_date_sensitive else "static"
     return ":".join((SCORER_VERSION, WEIGHTS_VERSION, "requirement-evidence-v11", extraction.PARSER_VERSION,
                      extraction.TAXONOMY_VERSION,
                      embedding_revision, date_key))
@@ -92,7 +100,21 @@ def _coverage(skills, resume_mentions, *, inferred=()):
     return _fraction(sum(credits) / len(skills))
 
 
-def _education_title_fit(resume_text, jd_text, job_title):
+def _clause_coverage(requirements, resume_mentions, priorities):
+    """Average unique mapped clauses; repeated keywords cannot change their weight."""
+    clauses = {}
+    for item in requirements:
+        if item["priority"] not in priorities or not item["skills"]:
+            continue
+        skills = tuple(sorted(item["skills"]))
+        inferred = skills if item["priority"] == "inferred_must_have" else ()
+        key = (item["priority"], skills)
+        clauses[key] = _coverage(skills, resume_mentions, inferred=inferred)
+    return _fraction(sum(clauses.values()) / len(clauses)) if clauses else UNOBSERVED_SKILL_COMPONENT
+
+
+def _education_fit(resume_text, jd_text):
+    """The legacy education_title response field now measures education only."""
     jd_education = education_requirement_evidence(jd_text)
     resume_education = extraction.extract_education_evidence(resume_text)
     if jd_education:
@@ -101,23 +123,13 @@ def _education_title_fit(resume_text, jd_text, job_title):
     else:
         education_fit = NEUTRAL_COMPONENT
 
-    body = "\n".join(line for line in jd_text.splitlines()
-                     if not re.search(r"\b(?:report(?:ing)? to|work with|senior engineers)\b", line, re.I))
-    jd_seniority = extraction.extract_seniority(job_title) or extraction.extract_seniority(body)
-    resume_seniority = extraction.extract_seniority(resume_text)
-    if jd_seniority and resume_seniority:
-        requested = max(_SENIORITY_LEVEL[level] for level in jd_seniority)
-        actual = max(_SENIORITY_LEVEL[level] for level in resume_seniority)
-        title_fit = 1.0 if actual >= requested else max(0.0, 1.0 - 0.25 * (requested - actual))
-    else:
-        title_fit = NEUTRAL_COMPONENT
-    return _fraction((education_fit + title_fit) / 2)
+    return _fraction(education_fit)
 
 
 def education_requirement_evidence(text):
     """Keep education evidence only when the JD explicitly asks about education."""
     return [item for item in extraction.extract_education_evidence(text)
-            if _EDUCATION_REQUIREMENT_CUE.search(item["text"])]
+            if item["levels"] or _EDUCATION_REQUIREMENT_CUE.search(item["text"])]
 
 
 def _education_evidence_matches(required, actual):
@@ -161,7 +173,6 @@ def score(resume_text, jd_text, semantic_similarity, *, job_title="", as_of_date
     if (isinstance(semantic_similarity, bool) or not isinstance(semantic_similarity, Real) or not math.isfinite(semantic_similarity)
             or not -1 <= semantic_similarity <= 1):
         raise ValueError("Semantic similarity must be finite and between -1 and 1")
-    semantic_similarity = float(semantic_similarity)
 
     jd_mentions = extraction.extract_skill_mentions(jd_text, all_mentions=True)
     requirements = extraction.extract_jd_requirements(jd_text, job_title=job_title)
@@ -204,16 +215,21 @@ def score(resume_text, jd_text, semantic_similarity, *, job_title="", as_of_date
         spans.sort()
         groups = []
         for start, end, skill in spans:
-            if groups and re.fullmatch(r"\s*(?:,|,?\s*or)\s*", item["text"][groups[-1][-1][1]:start], re.I):
+            if groups and re.fullmatch(r"\s*(?:,|/|,?\s*or)\s*", item["text"][groups[-1][-1][1]:start], re.I):
                 groups[-1].append((start, end, skill))
             else:
                 groups.append([(start, end, skill)])
         for group in groups:
             if len(group) < 2:
                 continue
-            # A comma list is an alternative only when it contains "or".
-            if not any(re.search(r"\bor\b", item["text"][left[1]:right[0]], re.I)
-                       for left, right in zip(group, group[1:])):
+            # Explicit alternatives and illustrative examples form one criterion.
+            prefix = item["text"][:group[0][0]]
+            example_list = bool(re.search(r"\(\s*e\.g\.,?[^()]*$", prefix, re.I))
+            trailing_alternative = bool(re.match(r",?\s*or\s+(?:similar|equivalent|another|other)\b",
+                                                  item["text"][group[-1][1]:], re.I))
+            if not (example_list or trailing_alternative or any(
+                    re.search(r"\bor\b", item["text"][left[1]:right[0]], re.I)
+                    for left, right in zip(group, group[1:]))):
                 continue
             options = [entry[2] for entry in group]
             selected = max(options, key=lambda skill: resume_mentions.get(skill, {}).get("evidence_credit", 0))
@@ -272,6 +288,14 @@ def score(resume_text, jd_text, semantic_similarity, *, job_title="", as_of_date
                          if not any(_education_evidence_matches(required, candidate)
                                     for required in education_by_clause[item["text"]]
                                     for candidate in resume_education)]
+    enrollment_requirements = [item for item in education_requirements
+                               if _ENROLLMENT_REQUIREMENT.search(item["text"])]
+    enrollment_evidence = extraction.education_enrollment_evidence(resume_text, as_of_date)
+    enrollment_by_clause = {item["text"]: [candidate for candidate in enrollment_evidence
+                            if any(_education_evidence_matches(required, candidate)
+                                   for required in education_by_clause[item["text"]])]
+                            for item in enrollment_requirements}
+    missing_enrollment = [item for item in enrollment_requirements if not enrollment_by_clause[item["text"]]]
     matched = []
     for jd_mention in jd_mentions:
         skill = jd_mention["skill"]
@@ -297,12 +321,12 @@ def score(resume_text, jd_text, semantic_similarity, *, job_title="", as_of_date
             matched.append({"jd": jd_item["text"], "resume": candidate["text"], "type": "education",
                             "jd_line": jd_item["line"], "resume_line": candidate["line"]})
 
-    semantic_fit = _fraction(max(0.0, semantic_similarity))
     year_requirements = [item for item in requirements
                          if item["priority"] == "must_have" and item["minimum_years"] is not None]
     required_years = [item["minimum_years"] for item in year_requirements]
-    candidate_years = extraction.experience_years(resume_text, as_of_date) if required_years else None
-    per_skill_years = extraction.skill_experience_years(resume_text, as_of_date) if required_years else {}
+    has_duration = any(item["minimum_years"] is not None for item in requirements)
+    candidate_years = extraction.experience_years(resume_text, as_of_date) if has_duration else 0.0
+    per_skill_years = extraction.skill_experience_years(resume_text, as_of_date) if has_duration else {}
 
     def observed_years(item):
         if item["skills"]:
@@ -315,53 +339,89 @@ def score(resume_text, jd_text, semantic_similarity, *, job_title="", as_of_date
         ratios = [1.0 if item["minimum_years"] == 0 else
                   min(1.0, observed_years(item) / item["minimum_years"])
                   for item in year_requirements]
-        experience_fit = _fraction(sum(ratios) / len(ratios))
+        # Every mandatory duration must be met; a general work history cannot
+        # compensate for an unmet specialist duration in another clause.
+        experience_fit = _fraction(min(ratios))
     else:
-        demonstrated = [resume_mentions[skill]["evidence_credit"]
-                        for skill in set(must_skills + nice_skills)
-                        if skill in resume_mentions and (
-                            resume_mentions[skill]["section"] in ("experience", "projects") or
-                            (resume_mentions[skill]["section"] == "other" and
-                             resume_mentions[skill]["evidence_credit"] >= 0.75))]
-        # Additional weaker evidence must not dilute existing evidence or the
-        # established neutral baseline when no duration is requested.
-        experience_fit = _fraction(max([NEUTRAL_COMPONENT, *demonstrated]))
+        required_capabilities = set(must_skills or inferred_skills)
+        generic = {"Artificial intelligence", "Programming", "Developer tooling",
+                   "Workflow automation", "Software development lifecycle"}
+        core = required_capabilities - generic or required_capabilities
+        demonstrated = [resume_mentions[skill]["evidence_credit"] for skill in core
+                        if skill in resume_mentions and
+                        resume_mentions[skill]["section"] in {"experience", "projects", "other"} and
+                        resume_mentions[skill]["evidence_credit"] >= 0.75]
+        # Demonstrated delivery satisfies unspecified duration; extra weaker
+        # evidence must not dilute an existing delivery example. Generic AI/tool
+        # vocabulary cannot substitute for a role's more specific capabilities.
+        if demonstrated:
+            experience_fit = 1.0
+        elif any("Programming" in extraction.IMPLIES.get(skill, ()) for skill in core) and (
+                resume_mentions.get("Programming", {}).get("evidence_credit", 0) >= 0.75):
+            experience_fit = 0.4
+        else:
+            experience_fit = NEUTRAL_COMPONENT if not required_capabilities else 0.0
+
+    must_fit = _clause_coverage(requirements, resume_mentions, {"must_have", "inferred_must_have"})
+    optional_fit = _clause_coverage(requirements, resume_mentions, {"nice_to_have"})
+    responsibility_lines = {section["start_line"] + offset
+                            for section in extraction.split_sections(jd_text)
+                            if section["name"] == "responsibilities"
+                            for offset, _ in enumerate(section["text"].splitlines())}
+    duties = [item for item in requirements if item["line"] in responsibility_lines and item["skills"]]
+    if duties:
+        duty_fit = _clause_coverage(duties, resume_mentions, {"unclassified", "must_have", "inferred_must_have"})
+    else:
+        duty_fit = must_fit
+    # Mapped duties are scored from source evidence. Embedding similarity can
+    # rank topical relevance but must neither create nor erase that evidence.
+    role_fit = duty_fit
+    jd_levels = extraction.extract_seniority(job_title)
+    resume_levels = extraction.extract_seniority(resume_text)
+    seniority_gap = bool(jd_levels and resume_levels and
+                         max(_SENIORITY_LEVEL[x] for x in jd_levels) > max(_SENIORITY_LEVEL[x] for x in resume_levels))
 
     components = {
-        "must_have": _coverage(must_skills + inferred_skills, resume_mentions, inferred=inferred_skills),
-        "nice_to_have": _coverage(nice_skills, resume_mentions),
-        "semantic": semantic_fit,
+        "must_have": must_fit,
+        "nice_to_have": optional_fit,
+        "semantic": role_fit,
         "experience": experience_fit,
-        "education_title": _education_title_fit(resume_text, jd_text, job_title),
+        "education_title": 0.0 if missing_enrollment else _education_fit(resume_text, jd_text),
     }
     weights = dict(WEIGHTS)
     if not nice_skills:
-        # Redistribute absent optional criteria proportionally. Largest
-        # remainders preserve integer display weights totaling exactly 100.
+        # Required/preferred criteria share the fixed 40-point skills budget.
+        weights["must_have"] += weights["nice_to_have"]
         weights["nice_to_have"] = 0
-        denominator = sum(weights.values())
-        scaled = {name: divmod(weight * 100, denominator) for name, weight in weights.items()}
-        weights = {name: value[0] for name, value in scaled.items()}
-        for name in sorted(weights, key=lambda name: scaled[name][1], reverse=True)[:100 - sum(weights.values())]:
-            weights[name] += 1
     component_points = {name: round(components[name] * maximum, 2) for name, maximum in weights.items()}
     raw_score = sum(component_points.values())
     must_have_count = len(must_skills) + len(required_years) + len(education_requirements)
     missing_count = len(missing) + len(missing_year_requirements) + len(missing_education)
     missing_fraction = missing_count / must_have_count if must_have_count else 0.0
-    jd_levels = extraction.extract_seniority(job_title)
-    resume_levels = extraction.extract_seniority(resume_text)
-    seniority_gap = bool(jd_levels and resume_levels and
-                         max(_SENIORITY_LEVEL[x] for x in jd_levels) > max(_SENIORITY_LEVEL[x] for x in resume_levels))
     if seniority_gap:
         must_have_count += 1
         missing_count += 1
         missing_fraction = missing_count / must_have_count
-    capped = bool((must_have_count and missing_fraction > MISSING_MUST_HAVE_FRACTION)
+    missing_specialist = [item for item in requirements if item["priority"] == "must_have"
+                          and re.search(r"\b(?:deep|expert|expertise|extensive)\b", item["text"], re.I)
+                          and any(skill in missing for skill in item["skills"])]
+    capped = bool(missing_education or missing_enrollment or missing_specialist or (must_have_count and missing_fraction > MISSING_MUST_HAVE_FRACTION)
                   or missing_year_requirements or seniority_gap)
+    # One scope ceiling replaces additive tenure deductions. Large mandatory
+    # gaps cannot be canceled by unrelated keyword or preferred-skill points.
+    tenure_shortfall = max((item["minimum_years"] - observed_years(item)
+                            for item in year_requirements), default=0.0)
+    scope_ceiling = max(SCOPE_CEILING_FLOOR,
+                        MISSING_MUST_HAVE_SCORE_CAP - max(0.0, tenure_shortfall) * SCOPE_SHORTFALL_POINTS_PER_YEAR)
     final_score = round(raw_score)
     if capped:
-        final_score = min(final_score, MISSING_MUST_HAVE_SCORE_CAP)
+        final_score = min(final_score, round(scope_ceiling))
+    if missing_education:
+        final_score = min(final_score, MISSING_DEGREE_SCORE_CAP)
+    if missing_specialist:
+        final_score = min(final_score, MISSING_SPECIALIST_SCORE_CAP)
+    if missing_enrollment:
+        final_score = min(final_score, MISSING_ENROLLMENT_SCORE_CAP)
     missing_requirements = [
         {"jd": item["text"], "jd_line": item["line"],
          "reason": "experience_years" if item["minimum_years"] is not None else "missing_skill"}
@@ -373,6 +433,8 @@ def score(resume_text, jd_text, semantic_similarity, *, job_title="", as_of_date
     ]
     if seniority_gap:
         missing_requirements.append({"jd": job_title, "jd_line": 0, "reason": "seniority"})
+    missing_requirements.extend({"jd": item["text"], "jd_line": item["line"], "reason": "current_enrollment"}
+                                for item in missing_enrollment)
     assessed = [item for item in requirements if item["priority"] in {"must_have", "nice_to_have", "inferred_must_have"}]
     recognized = [item for item in assessed if item["text"] not in assisted_needs_review and (
                   item["skills"] or item["minimum_years"] is not None
@@ -411,6 +473,11 @@ def score(resume_text, jd_text, semantic_similarity, *, job_title="", as_of_date
                 "resume_evidence": candidate["text"] if candidate else "",
                 "evidence_type": "education" if candidate else "",
             })
+        if item in enrollment_requirements:
+            current = enrollment_by_clause[clause]
+            criteria.append({"criterion": "Current degree enrollment", "status": "supported" if current else "no_evidence",
+                             "resume_evidence": current[0]["text"] if current else "",
+                             "evidence_type": "education_enrollment"})
         if clause in assisted_needs_review or not criteria:
             status = "manual_review"
         elif all(entry["status"] == "supported" for entry in criteria):

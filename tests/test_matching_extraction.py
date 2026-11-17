@@ -108,6 +108,42 @@ class MatchingExtractionTests(unittest.TestCase):
         self.assertEqual(items[0]["skills"], [])
         self.assertEqual(items[1]["skills"], ["Workflow automation"])
 
+    def test_narrative_jd_sections_do_not_become_scored_requirements(self):
+        text = (
+            "About Rare Candy\nAI-powered marketplace for collectors.\n"
+            "The Role\nBuild Android features in Kotlin and Jetpack Compose.\n"
+            "What Success Looks Like\nShip meaningful improvements to the collector experience.\n"
+            "A Day in Your Life\nYou see your work go directly into users' hands.\n"
+            "You Might Be a Fit If\n"
+            "You have around 3 years of Android development experience and have shipped real features.\n"
+            "You're comfortable building with Kotlin and Jetpack Compose.\n"
+            "You've worked with GraphQL, or you have enough API experience to ramp quickly.\n"
+            "You know the trading-card or collector world.\n"
+            "What You'll Need to Thrive Here\nYou'll need to be curious, detail-oriented, and comfortable learning by doing.\n"
+            "How to Apply\nDescribe an Android feature you built."
+        )
+        sections = extraction.split_sections(text)
+        self.assertEqual([section["name"] for section in sections], [
+            "non_requirements", "responsibilities", "non_requirements", "non_requirements",
+            "requirements", "requirements", "non_requirements",
+        ])
+        items = extraction.extract_jd_requirements(text)
+        texts = [item["text"] for item in items]
+        self.assertFalse(any("AI-powered marketplace" in item or "Ship meaningful" in item or
+                             "go directly" in item or "Describe an Android feature" in item
+                             for item in texts))
+        self.assertTrue(any("3 years" in item["text"] and item["minimum_years"] == 3 for item in items))
+        self.assertTrue(any("GraphQL" in item["skills"] for item in items))
+        self.assertTrue(any("Kotlin" in item["skills"] and "Jetpack Compose" in item["skills"]
+                            for item in items))
+        self.assertFalse(any("Go" in item["skills"] for item in items))
+
+    def test_go_language_match_is_case_sensitive(self):
+        self.assertNotIn("Go", {item["skill"] for item in extraction.extract_skill_mentions(
+            "A Day in Your Life\nYour work can go directly into users' hands.")})
+        self.assertIn("Go", {item["skill"] for item in extraction.extract_skill_mentions(
+            "Skills\nGo development")})
+
     def test_clay_curly_apostrophe_heading_keeps_unmapped_qualifications(self):
         items = extraction.extract_jd_requirements(
             "What You\u2019ll Work On\nCI/CD pipelines, including evaluation and validation.\n"
@@ -288,7 +324,7 @@ class MatchingExtractionTests(unittest.TestCase):
         })
 
     def test_versioned_android_taxonomy_and_framework_implications(self):
-        self.assertEqual(extraction.TAXONOMY_VERSION, "skills-v6-esco-1.2.0")
+        self.assertEqual(extraction.TAXONOMY_VERSION, "skills-v12-esco-1.2.0")
         mentions = extraction.expand_implied_skills(
             extraction.extract_skill_mentions("Skills\nJetpack Compose, Coroutines, Hilt, Retrofit, Room, "
                                               "Firebase, Kafka, GraphQL, Terraform"))
@@ -297,7 +333,7 @@ class MatchingExtractionTests(unittest.TestCase):
                          "Firebase", "Kafka", "GraphQL", "Terraform"}.issubset(names))
         self.assertEqual({item["skill"] for item in extraction.expand_implied_skills(
             extraction.extract_skill_mentions("Requirements\nFlask and Pandas required"))},
-            {"Flask", "Pandas", "Python"})
+            {"Flask", "Pandas", "Python", "Backend engineering"})
 
     def test_helm_is_a_recognized_requirement_and_resume_skill(self):
         result = extraction.extract_jd_requirements("WHAT SETS YOU APART\nHelm.")
@@ -401,7 +437,8 @@ class MatchingExtractionTests(unittest.TestCase):
         )
         as_of = date(2024, 6, 1)
         self.assertEqual(extraction.experience_years(resume, as_of), 3.0)
-        self.assertEqual(extraction.skill_experience_years(resume, as_of), {"Python": 3.0, "SQL": 2.0})
+        self.assertEqual(extraction.skill_experience_years(resume, as_of),
+                         {"Programming": 3.0, "Python": 3.0, "SQL": 2.0})
 
     def test_current_experience_date_uses_explicit_scoring_date(self):
         resume = "Work Experience\nPython Intern | Jun 2022 - Present"

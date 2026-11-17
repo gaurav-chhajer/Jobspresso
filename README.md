@@ -90,11 +90,11 @@ repeatable `--ablation NAME=PATH` options; each variant reports the same error,
 rank, and 60-point cutoff metrics. Review recurring unknown JD terms weekly with
 `python -B -m scripts.review_unmatched_skills`; approve aliases by editing the
 versioned taxonomy at `backend/taxonomy/skills.json` and rerun the evaluator.
-The current `skills-v6-esco-1.2.0` taxonomy preserves the curated project skills
+The current `skills-v12-esco-1.2.0` taxonomy preserves the curated project skills
 and directional implications, with a small reviewed set of exact English aliases
 from ESCO. Broader ESCO terms were not enabled as automatic matches because that
 would add ambiguous and overly general requirements without human validation.
-The deterministic-v10 scorer also recognizes explicit developer-tooling,
+The deterministic-v18 scorer also recognizes explicit developer-tooling,
 infrastructure, workflow-automation, AI, and software-lifecycle capabilities.
 CI/CD supplies partial transferable evidence for developer tooling, automation,
 and lifecycle work; it does not prove coding-agent, monorepo, or cloud-development
@@ -108,12 +108,19 @@ Each score also reports clause-level evidence as supported, partial, no evidence
 detected, or manual review, with the resume text that triggered each detected
 match. Parser coverage counts clauses the parser mapped; it does not indicate
 how strongly the resume supports those clauses.
-When a posting has no validated optional skills, weights-v2 gives that component zero
-weight and redistributes its weight proportionally across the other components
-(44/0/28/17/11); postings with optional requirements retain 40/10/25/15/10.
+The local `weights-v3-clause-rubric` revision uses required skills 30, preferred
+skills 10, experience/scope 30, evidence-grounded responsibility alignment 20 and
+education 10. Without validated optional skills, their ten points remain in the
+skills budget: 40/0/20/30/10 in response-field order. Unique mapped skill clauses
+receive equal weight, so repeated clauses cannot inflate their share. Every
+mandatory duration must be met; duration fit uses the weakest mandatory ratio.
+The legacy `semantic` field now measures mapped responsibility evidence directly.
+Topical cosine does not create or erase capability evidence.
+The legacy `education_title` field measures education only; seniority affects
+experience/scope instead. Existing response fields and storage shapes are retained.
 Returned component weights and points describe the calculation for that posting.
 `Bonus` headings introduce optional skills, retaining their lower 10-point weight
-against 40 points for required skills. Location/remote sections and ATS tags such
+within the 40-point skills budget. Location/remote sections and ATS tags such
 as `#LI-Remote` are excluded from requirement coverage and skill evidence; location
 and benefits sections are also excluded from semantic similarity. Location text
 does not supply education or seniority requirements. A/B testing and audio
@@ -122,6 +129,70 @@ establish playback or streaming experience. Build, test and release pipelines
 are recognized as CI/CD evidence. These parser changes are versioned separately.
 These rules invalidate previous scoring caches but do not overwrite saved scores
 or establish human calibration of the resulting number.
+The local calibration revision recognizes common qualification headings,
+"preferably" clauses, and illustrative language/framework alternatives. Project
+technology headers receive project credit when followed by a work description;
+an unsupported stack list alone does not. Employer mentions of Figma do not prove
+Figma tool experience. Explicit required skills without demonstrated relevant work
+receive no default experience credit. Missing mandatory education now caps the
+score at 30; preferred education does not trigger that cap. These are provisional
+rules, not a production accuracy certification.
+Degree abbreviations distinguish ordinary "be"/"me" from BE/ME; flattened
+qualification clauses and Unicode year ranges retain their required context and
+lower bounds. iOS does not match Android. Recruiting and debt-collections skills
+are explicit curated capabilities, not inferred from engineering or ATS familiarity.
+Demonstrated language use supports generic programming; other directional transfers
+retain conservative partial credit. A single scope ceiling replaces additive tenure
+deductions, preserving the existing mandatory-education and specialist caps.
+Current-degree requirements additionally require evidence of relevant enrollment:
+an education date range covering the scoring month or an explicit current-study
+statement. A completed degree alone does not establish enrollment. Missing evidence
+caps the provisional score at 40 and is shown as no evidence, rather than a claim
+that the applicant is ineligible. Education-bearing resumes use dated cache keys
+so eligibility is reassessed as dates pass. Bracketed tenure ranges and explicit
+management, game-development, wireless and backend capabilities are recognized.
+Customer-success, account-management, program-management and embedded-system
+requirements are explicit capabilities; generic AI or Android experience does not
+establish them. Preferred tenure evidence is evaluated without requiring a mandatory
+tenure clause. A preferred startup context does not make the preceding required
+duration optional. Compound qualification headings, `3-to 5 years` ranges, degree
+abbreviations and recruitment-fraud section boundaries retain their source context.
+
+The private 2026-11-16 calibration snapshots and per-job comparisons are under
+ignored `data/gaurav-calibration-20261116/`. Frozen reference scores are model
+judgments for one supplied resume, not employer ATS scores or independent human
+labels. The initial three development passes reduced mean absolute error from 15.5 to 9.15;
+the unchanged scorer then achieved only 4/20 within five points on holdout, with
+15.7 mean absolute error and a longest streak of two. The twenty-consecutive-job
+acceptance criterion remains unmet. Those holdout jobs are now consumed and must
+not be presented as unseen validation for subsequent changes. The local harness
+uses stored full descriptions, separate caches, and blocks network calls; Groq
+requirement assistance is omitted, so deployed behavior with that assistance is
+not certified. Preserve the private snapshots before running the task-specific
+`python -B -m scripts.evaluate_gaurav_calibration` harness with a fresh output path.
+Subsequent rounds and the approved clause-level redesign are recorded privately
+in that directory. Consumed-pair replays are development checks, never new unseen
+validation, and the original labels remain frozen.
+The most recent untouched validation batch before these parser/eligibility fixes
+achieved only 5/20 within five points, with mean absolute error 13.95 and a longest
+streak of two. The local redesign therefore remains experimental; it has not
+met the requested acceptance criterion or demonstrated production accuracy.
+On 2026-11-17, v18/parser24/taxonomy12 passed 1,268 application tests. Its consumed
+120-job replay achieved mean error 6.97 and 66/120 within five points, but a fresh
+20-job batch achieved mean error 14.75, 8/20 within five and a longest/ending streak
+of four. See the private `CONTINUATION-v18.md` and `comparison-v18-140.csv` artifacts.
+A separately approved local NLI-model experiment failed its frozen evidence gates
+and was not integrated. Available model files do not imply that the scorer uses
+them; the new candidate remains excluded from application scoring.
+The user subsequently replaced the consecutive-job criterion with a larger
+entry-level comparison, allowing all qualifying stored jobs when fewer than
+10,000 were available. The resulting 62-job cohort included 44 new jobs.
+Offline replay of the last confirmed deployed v10 source had mean absolute
+error 16.60, versus 8.61 for unchanged v18, 9.00 for the NLI-assisted v18
+experiment, and 10.21 for a later score-calibration mapping. On the 44 new jobs,
+v18 had mean error 9.02 versus v10's 16.09. The user selected unchanged v18 for
+release; neither NLI nor the later mapping is part of it. These remain estimates
+against model-generated references for one resume, not production certification.
 `matching_extraction.validate_skill_candidates` is the shared skill boundary:
 accepted labels must resolve to the reviewed catalog and have contextual alias
 evidence in the original JD clause. Accepted records retain their source text and
