@@ -1,10 +1,11 @@
 """Offline integration coverage for the ZIP UI and administrative boundaries."""
 
+import os
 import sqlite3
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from backend import admin, accounts, pipeline_skeleton as pipeline, scoring_feedback, store, tracker_analytics
 from backend.migrate import apply_migrations
@@ -286,6 +287,34 @@ class AdminIntegrationTests(unittest.TestCase):
         self.assertEqual(self.conn.execute('SELECT fit_score FROM score_feedback').fetchone()[0],85)
         response=self.client.get('/admin/area/quality')
         self.assertIn(b'Strong (80+)',response.data)
+
+    def test_resume_improvement_is_admin_only_and_uses_only_groq_slots_three_to_seven(self):
+        from backend import resume_improvement
+        self.assertIn(b'Draft resume for this job', self.client.get('/jobs?job=1').data)
+        fake = Mock()
+        fake.status_code = 200
+        fake.json.return_value = {'choices': [{'message': {'content': 'Python resume\nTailored draft'}}]}
+        environment = {f'GROQ_API_KEY_{slot}': '' for slot in range(3, 8)}
+        environment['GROQ_API_KEY_4'] = 'synthetic-slot-four'
+        with patch.dict(os.environ, environment), patch.object(resume_improvement.requests, 'post', return_value=fake) as send:
+            response = self.post('/jobs/1/improve-resume', {})
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'Tailored draft', response.data)
+        self.assertIn(b'not changed your saved resume', response.data)
+        self.assertEqual(self.conn.execute('SELECT resume_text FROM users WHERE id=1').fetchone()[0], 'Python resume')
+        self.assertEqual(send.call_args.kwargs['headers']['Authorization'], 'Bearer synthetic-slot-four')
+        self.assertIn('Software Engineer 1', send.call_args.kwargs['json']['messages'][1]['content'])
+        self.assertTrue(fake.close.called)
+
+    def test_non_admin_cannot_generate_resume_improvement(self):
+        self.second_user()
+        with self.client.session_transaction() as session:
+            session['user_id'], session['session_version'] = 2, 0
+        from backend import resume_improvement
+        with patch.object(resume_improvement.requests, 'post') as send:
+            response = self.post('/jobs/1/improve-resume', {})
+        self.assertEqual(response.status_code, 403)
+        send.assert_not_called()
 
     def test_duplicates_close_older_open_copy_and_audit(self):
         with self.conn:

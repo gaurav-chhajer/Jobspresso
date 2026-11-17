@@ -41,6 +41,7 @@
 <div class="actions jd-actions">{% if selected.url %}<a class="btn p" href="{{ selected.url }}" target="_blank" rel="noopener noreferrer">Apply on company website</a>{% endif %}
 <form method="post" action="{{ url_for('applications') }}">{{ csrf() }}<input type="hidden" name="job_id" value="{{ selected.job_id }}"><input type="hidden" name="status" value="saved"><button class="btn">Save job</button></form>
 <form method="post" action="{{ url_for('applications') }}">{{ csrf() }}<input type="hidden" name="job_id" value="{{ selected.job_id }}"><input type="hidden" name="status" value="applied"><button class="btn">Track as applied</button></form></div>
+{% if is_account_admin and has_resume %}<form method="post" action="{{ url_for('improve_resume_for_job', job_id=selected.job_id) }}">{{ csrf() }}<button class="btn">Draft resume for this job</button><p class="sub">Admin only. Sends your saved resume and this job description to one configured Groq key in slots 3–7. The draft will not replace your saved resume.</p></form>{% endif %}
 <p class="sub jd-note">Tracking a status does not submit an application. Update existing entries on the Applications screen.</p>
 {% if selected.is_stale %}<section class="jd-sec" role="status"><h3>Score updating</h3><p class="sub">This saved job is being rescored using your updated resume. The previous score and evidence are hidden until rescoring is complete.</p></section>{% else %}
 {% if selected.reasoning %}<section class="jd-sec"><h3>Why this score</h3><p>{{ selected.reasoning }}</p></section>{% endif %}

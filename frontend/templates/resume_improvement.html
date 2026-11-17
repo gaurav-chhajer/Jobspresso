@@ -1,0 +1,14 @@
+{% extends 'base.html' %}
+{% block title %}Job-specific resume draft | Jobspresso{% endblock %}
+{% block content %}
+<section class="card">
+  {% if job %}<p class="sub">{{ job.company_name }} | {{ job.title }}</p>{% endif %}
+  <h1>Job-specific resume draft</h1>
+  {% if improved_resume %}
+    <p class="sub">Review every claim for accuracy. This draft was generated with Groq and has not changed your saved resume.</p>
+    <label for="improved-resume">Draft resume</label>
+    <textarea id="improved-resume" rows="28" readonly>{{ improved_resume }}</textarea>
+  {% endif %}
+  <p><a class="btn" href="{{ url_for('jobs', job=job.id if job else none, _anchor='job-detail') }}">Back to job</a></p>
+</section>
+{% endblock %}

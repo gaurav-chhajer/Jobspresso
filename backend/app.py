@@ -390,6 +390,35 @@ def create_app(database_path=None, upload_dir=None):
                     data["selected"]["description"] = "The saved posting has no usable description. Read the source posting before applying."
         return render("jobs", data)
 
+    def resume_draft_page(job, improved_resume, message, status=200):
+        data = context()
+        data.update(job=job, improved_resume=improved_resume, message=message)
+        return render_template("resume_improvement.html", **data), status
+
+    @application.post("/jobs/<int:job_id>/improve-resume")
+    def improve_resume_for_job(job_id):
+        if not g.account or not g.account["is_admin"]:
+            return "Administrator access required.", 403
+        resume_text = g.user.get("resume_text", "")
+        if not resume_text.strip():
+            return resume_draft_page(None, None, "Save a resume before generating a draft.", 400)
+        row = connection().execute("""SELECT j.*,c.name AS company_name FROM jobs j
+            JOIN companies c ON c.id=j.company_id WHERE j.id=? AND j.is_active=1""", (job_id,)).fetchone()
+        if row is None:
+            return "This job is unavailable.", 404
+        job = dict(row)
+        from backend.resume_improvement import ResumeImprovementError, improve_resume
+        try:
+            description = extract_job_description(row)
+            draft = improve_resume(resume_text, job["title"], job["company_name"], description)
+        except ValueError as error:
+            return resume_draft_page(job, None, str(error), 400)
+        except ResumeImprovementError as error:
+            application.logger.warning("Admin resume draft failed: job_id=%s error=%s",
+                                       job_id, type(error).__name__)
+            return resume_draft_page(job, None, str(error), 503)
+        return resume_draft_page(job, draft, None)
+
     @application.get("/jobs/local")
     def retired_local_matches():
         return redirect(url_for("jobs"))
