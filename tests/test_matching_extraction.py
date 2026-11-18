@@ -138,6 +138,26 @@ class MatchingExtractionTests(unittest.TestCase):
                             for item in items))
         self.assertFalse(any("Go" in item["skills"] for item in items))
 
+    def test_hevo_headings_recover_requirements_after_company_intro(self):
+        text = (
+            "About Hevo:\nHevo builds data infrastructure.\n"
+            "What we are building:\nOur platform uses Snowflake.\n"
+            "What you’ll own as Associate SDE at Hevo:\nAssist in building REST API components.\n"
+            "What you’ll bring to the table:\nProficiency in Java/TypeScript/Python.\n"
+            "Candidate Persona:\nB Tech in Computer Science or equivalent.\n"
+            "Why this role:\nWe use BigQuery.\n"
+        )
+        self.assertEqual([section["name"] for section in extraction.split_sections(text)], [
+            "non_requirements", "non_requirements", "responsibilities", "requirements",
+            "requirements", "non_requirements",
+        ])
+        items = extraction.extract_jd_requirements(text)
+        self.assertTrue({"Java", "TypeScript", "Python"} <= {
+            skill for item in items if item["priority"] == "must_have" for skill in item["skills"]
+        })
+        self.assertTrue(any("B Tech" in item["text"] for item in items))
+        self.assertFalse(any("BigQuery" in item["text"] or "Snowflake" in item["text"] for item in items))
+
     def test_go_language_match_is_case_sensitive(self):
         self.assertNotIn("Go", {item["skill"] for item in extraction.extract_skill_mentions(
             "A Day in Your Life\nYour work can go directly into users' hands.")})

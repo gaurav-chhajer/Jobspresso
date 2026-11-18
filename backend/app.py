@@ -34,6 +34,15 @@ def create_app(database_path=None, upload_dir=None):
                               SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax")
     database = Path(database_path) if database_path is not None else ROOT / "data/jobs.db"
     uploads = Path(upload_dir) if upload_dir is not None else ROOT / "data/uploads"
+    location_cache = (0.0, [])
+
+    def job_location_suggestions(conn):
+        nonlocal location_cache
+        expires, suggestions = location_cache
+        if perf_counter() >= expires:
+            suggestions = store.location_suggestions(conn)
+            location_cache = (perf_counter() + 60, suggestions)
+        return suggestions
 
     def connection():
         if "database" not in g:
@@ -367,15 +376,22 @@ def create_app(database_path=None, upload_dir=None):
         except ValueError as error:
             data["message"] = str(error)
             return render("jobs", data, 400)
-        populate(data)
         if data["user"]:
             conn = connection()
             user_id = data["user"]["id"]
             data["company_cards"] = True
-            data["matches"], data["pages"] = store.matches(conn, user_id, data, utc_now(), include_stale=True)
+            from backend import pipeline_skeleton
+            filtering_user = pipeline_skeleton.account_filtering_user(conn, data['user'])
+            eligibility_sql = ''
+            if filtering_user['_admin_india_only']:
+                conn.create_function('india_match_eligible', 2, lambda location, raw_json:
+                    pipeline_skeleton._admin_india_job_eligible(dict(location=location, raw_json=raw_json)),
+                    deterministic=True)
+                eligibility_sql = ' AND india_match_eligible(j.location,j.raw_json)=1'
+            data['admin_india_only'] = filtering_user['_admin_india_only']
+            data["matches"], data["pages"] = store.matches(conn, user_id, data, utc_now())
             mark_time("matches")
-            data["has_stale_matches"] = any(item["is_stale"] for item in data["matches"])
-            data["job_locations"] = store.location_suggestions(conn)
+            data["job_locations"] = job_location_suggestions(conn)
             mark_time("locations")
             data["company_groups"] = []
             for item in data["matches"]:
@@ -385,17 +401,15 @@ def create_app(database_path=None, upload_dir=None):
             data["saved_searches"] = conn.execute("SELECT id,name,filters_json FROM saved_searches WHERE user_id=? ORDER BY name LIMIT 50", (user_id,)).fetchall()
             data["saved_searches"] = [dict(row, link=url_for("jobs", **json.loads(row["filters_json"]))) for row in data["saved_searches"]]
             if selected_id:
-                row = conn.execute("SELECT " + store.MATCH_COLUMNS + " " + store.MATCH_FROM_BASE +
+                row = conn.execute("SELECT " + store.MATCH_COLUMNS + " " + store.MATCH_FROM + eligibility_sql +
                     " AND j.id=? AND (?=0 OR EXISTS(SELECT 1 FROM company_subscriptions mine WHERE mine.user_id=s.user_id AND mine.company_id=c.id))",
                     (user_id, user_id, user_id, selected_id, data['only_mine'])).fetchone()
                 if not row:
-                    data["message"] = "This match is unavailable or needs rescoring."
+                    data["message"] = "This match is unavailable under your current preferences."
                     return render("jobs", data, 404)
                 data["selected"] = store.match(row)
             elif data["matches"]:
                 data["selected"] = data["matches"][0]
-            data["has_stale_matches"] = data.get("has_stale_matches", False) or bool(
-                data.get("selected") and data["selected"]["is_stale"])
             if data["selected"]:
                 score_row = conn.execute("""SELECT s.id,s.fit_score,s.reasoning,s.matched_skills,s.missing_requirements,
                         s.evaluation_json,s.deterministic_json,s.scored_at
@@ -594,9 +608,10 @@ def create_app(database_path=None, upload_dir=None):
     @application.route("/resume", methods=["GET", "POST"])
     def resume():
         data = context()
-        populate(data)
         if data["user"]:
             conn = connection()
+            data.update(store.resume_stats(conn, data["user"]["id"]))
+            mark_time("resume_stats")
             data["versions"] = conn.execute("SELECT id,source_name,created_at FROM resume_versions WHERE user_id=? ORDER BY id DESC LIMIT 10", (data["user"]["id"],)).fetchall()
             # Settings support only UTC and Kolkata, which has no daylight saving.
             zone = {"UTC": timezone.utc, "Asia/Kolkata": timezone(timedelta(hours=5, minutes=30))}[data["settings"]["timezone"]]

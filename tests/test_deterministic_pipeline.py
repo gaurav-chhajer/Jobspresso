@@ -25,7 +25,8 @@ class DeterministicPipelineTests(unittest.TestCase):
         job = {"title": "Software Engineer", "department": None, "location": "Remote",
                "raw_json": json.dumps({"content": "Requirements\nPython required\n"})}
         with patch("backend.career_sources.prepare_job", side_effect=lambda value: dict(value)), \
-                patch("backend.semantic_similarity.section_similarity", return_value=0.72) as semantic, \
+                patch("backend.semantic_similarity.section_similarity",
+                      side_effect=ValueError("Job description has no embeddable sections")) as semantic, \
                 patch("backend.semantic_similarity.fuzzy_skill_matches", return_value=[]):
             result = pipeline_skeleton.score_job_deterministic(user, job, "Example", scorer)
             repeated = pipeline_skeleton.score_job_deterministic(user, job, "Example", scorer)
@@ -34,7 +35,7 @@ class DeterministicPipelineTests(unittest.TestCase):
         self.assertIn("Python", result["matched_skills"])
         self.assertEqual(result["missing_requirements"], [])
         self.assertEqual(result["scorer_version"], "deterministic-v18")
-        semantic.assert_called_once()
+        semantic.assert_not_called()
 
 
 if __name__ == "__main__":

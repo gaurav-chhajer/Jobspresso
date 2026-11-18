@@ -552,6 +552,9 @@ five-minute intervals measured from their start; an overrun finishes before the
 next fetch starts, without overlapping fetches. Scoring continues while boards
 are downloaded. Successful snapshots enter the hosted pending queue immediately;
 partial board failures are logged and retain previous data without blocking scoring.
+If a pass reaches its 50-minute budget, the local worker saves its last attempted
+company ID in ignored `data/hosted_fetch_cursor.json` and resumes after it on the
+next pass. The cursor resets after all listed companies have been attempted.
 The deterministic scoring loop evaluates up to two candidates concurrently per
 account batch using separate SQLite cache connections. Hosted score writes remain
 serialized, and the shared local embedding model keeps its existing encode lock.

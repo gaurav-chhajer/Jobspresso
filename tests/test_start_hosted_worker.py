@@ -158,6 +158,38 @@ class StartupWorkerTests(unittest.TestCase):
 
 
 class QueuedWorkerTests(unittest.TestCase):
+    def test_fetch_cursor_is_atomic_state_and_validates_saved_value(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'hosted_fetch_cursor.json'
+            self.assertIsNone(watch_hosted_jobs.load_fetch_cursor(path))
+            watch_hosted_jobs.save_fetch_cursor(42, path)
+            self.assertEqual(watch_hosted_jobs.load_fetch_cursor(path), 42)
+            watch_hosted_jobs.save_fetch_cursor(None, path)
+            self.assertIsNone(watch_hosted_jobs.load_fetch_cursor(path))
+            path.write_text('{"last_company_id": false}', encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, 'invalid'):
+                watch_hosted_jobs.load_fetch_cursor(path)
+
+    def test_fetch_loop_resumes_from_and_persists_cursor(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'hosted_fetch_cursor.json'
+            watch_hosted_jobs.save_fetch_cursor(42, path)
+            stop = MagicMock()
+            stop.is_set.return_value = False
+            stop.wait.return_value = True
+
+            def fetch(client, deadline, **kwargs):
+                self.assertEqual(kwargs['start_after_company_id'], 42)
+                kwargs['progress_callback'](91)
+                return 0
+
+            with patch.object(watch_hosted_jobs, 'FETCH_CURSOR_PATH', path), \
+                    patch.object(runner, '_fetch_and_score', side_effect=fetch) as run_fetch, \
+                    patch.object(watch_hosted_jobs.time, 'monotonic', return_value=100):
+                self.assertEqual(watch_hosted_jobs._fetch_loop('client', stop), 0)
+            self.assertEqual(run_fetch.call_count, 1)
+            self.assertEqual(watch_hosted_jobs.load_fetch_cursor(path), 91)
+
     def test_fetch_cadence_uses_start_time_and_does_not_overlap_long_fetches(self):
         for duration, expected_delay in ((20, 280), (300, 0), (450, 0)):
             with self.subTest(duration=duration):
@@ -167,8 +199,15 @@ class QueuedWorkerTests(unittest.TestCase):
                 with patch.object(runner, '_fetch_and_score', return_value=0) as fetch, \
                         patch.object(watch_hosted_jobs.time, 'monotonic', side_effect=[100, 100 + duration]):
                     self.assertEqual(watch_hosted_jobs._fetch_loop('client', stop), 0)
-                fetch.assert_called_once_with('client', 100 + runner.MATCHING_SECONDS,
-                                              fetch_only=True, pool=None, stop=stop, allow_partial=True)
+                fetch.assert_called_once()
+                args, kwargs = fetch.call_args
+                self.assertEqual(args, ('client', 100 + runner.MATCHING_SECONDS))
+                self.assertEqual({key: kwargs[key] for key in
+                                  ('fetch_only', 'pool', 'stop', 'allow_partial',
+                                   'start_after_company_id')},
+                                 dict(fetch_only=True, pool=None, stop=stop, allow_partial=True,
+                                      start_after_company_id=None))
+                self.assertTrue(callable(kwargs['progress_callback']))
                 stop.wait.assert_called_once_with(expected_delay)
 
     def test_fetch_failure_preserves_queue_and_does_not_restart_uncertain_writes(self):
@@ -184,7 +223,8 @@ class QueuedWorkerTests(unittest.TestCase):
         sessions = [MagicMock(), MagicMock()]
         shared_stop = []
 
-        def fetch(client, deadline, *, fetch_only, pool, stop, allow_partial):
+        def fetch(client, deadline, *, fetch_only, pool, stop, allow_partial,
+                  start_after_company_id, progress_callback):
             self.assertTrue(scoring_started.wait(2))
             count.append(1)
             client.call('snapshot', {'jobs': []})
@@ -223,7 +263,8 @@ class QueuedWorkerTests(unittest.TestCase):
         scorer = MagicMock()
         scorer_thread = []
 
-        def fetch(client, deadline, *, fetch_only, pool, stop, allow_partial):
+        def fetch(client, deadline, *, fetch_only, pool, stop, allow_partial,
+                  start_after_company_id, progress_callback):
             client.call('snapshot', {'jobs': [{'id': 1}]})
             snapshot_saved.set()
             self.assertTrue(score_saved.wait(2), 'Scoring waited for fetching to finish')

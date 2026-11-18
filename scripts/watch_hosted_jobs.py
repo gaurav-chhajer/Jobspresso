@@ -1,7 +1,10 @@
 """Run hosted matching and immediate alerts from this computer; Ctrl+C stops it."""
 
 import argparse
+import json
 import logging
+import os
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -21,6 +24,41 @@ READ_ATTEMPTS = 3
 READ_BACKOFF_SECONDS = 30
 SCORING_RECONNECT_SECONDS = 30
 TRANSIENT_READ_STATUSES = frozenset({502, 503, 504})
+FETCH_CURSOR_PATH = Path(__file__).resolve().parents[1] / "data" / "hosted_fetch_cursor.json"
+
+
+def load_fetch_cursor(path=FETCH_CURSOR_PATH):
+    """Return the last attempted company ID, or None before the first cycle."""
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise RuntimeError("Could not read the saved fetch cursor") from error
+    if (not isinstance(state, dict) or set(state) != {"last_company_id"} or
+            (state["last_company_id"] is not None and
+             (type(state["last_company_id"]) is not int or state["last_company_id"] <= 0))):
+        raise ValueError("Saved fetch cursor is invalid")
+    return state["last_company_id"]
+
+
+def save_fetch_cursor(company_id, path=FETCH_CURSOR_PATH):
+    """Atomically persist fetch progress so a later cycle resumes after it."""
+    if company_id is not None and (type(company_id) is not int or company_id <= 0):
+        raise ValueError("Fetch cursor must be a positive company ID or None")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                         prefix=path.name + ".", suffix=".tmp", delete=False) as stream:
+            temporary_path = Path(stream.name)
+            json.dump({"last_company_id": company_id}, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary_path.replace(path)
+    finally:
+        if temporary_path is not None and temporary_path.exists():
+            temporary_path.unlink()
 
 
 class _QueuedClient:
@@ -73,11 +111,16 @@ class _QueuedClient:
 
 
 def _fetch_loop(client, stop):
+    after_company_id = load_fetch_cursor(FETCH_CURSOR_PATH)
     while not stop.is_set():
         started = time.monotonic()
         logger.info("Independent fetch started; successful snapshots enter the durable queue.")
         status = worker._fetch_and_score(client, started + worker.MATCHING_SECONDS,
-                                        fetch_only=True, pool=None, stop=stop, allow_partial=True)
+                                        fetch_only=True, pool=None, stop=stop, allow_partial=True,
+                                        start_after_company_id=after_company_id,
+                                        progress_callback=lambda company_id: save_fetch_cursor(
+                                            company_id, FETCH_CURSOR_PATH))
+        after_company_id = load_fetch_cursor(FETCH_CURSOR_PATH)
         if status:
             logger.error("Fetch loop stopped; successful snapshots remain queued. Review logs before restarting.")
             return status

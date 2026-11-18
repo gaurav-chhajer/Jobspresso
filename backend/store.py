@@ -153,6 +153,8 @@ def matches(conn, user_id, selected_filters, now, include_stale=False):
     params = [user_id] * 3
     match_from = MATCH_FROM_BASE if include_stale else MATCH_FROM
     where = match_from + (" AND (s.is_stale=1 OR s.fit_score>=?)" if include_stale else " AND s.fit_score>=?") + " AND (?=0 OR c.id=?)"
+    if selected_filters.get('admin_india_only'):
+        where += ' AND india_match_eligible(j.location,j.raw_json)=1'
     if selected_filters.get('only_mine'):
         where += " AND EXISTS(SELECT 1 FROM company_subscriptions mine WHERE mine.user_id=s.user_id AND mine.company_id=c.id)"
     params.extend((selected_filters["min_score"], selected_filters["company"], selected_filters["company"]))
@@ -168,28 +170,40 @@ def matches(conn, user_id, selected_filters, now, include_stale=False):
     if selected_filters["job_type"]:
         where += " AND lower(COALESCE(json_extract(j.raw_json,'$.employmentType'),json_extract(j.raw_json,'$.categories.commitment'),'')) LIKE ?"
         params.append({"internship": "%intern%", "full-time": "%full%", "part-time": "%part%"}[selected_filters["job_type"]])
-    count = conn.execute("SELECT COUNT(*) " + where, params).fetchone()[0]
     order = ("s.is_stale ASC,s.fit_score DESC,j.id ASC" if selected_filters["sort"] == "best"
              else "s.is_stale ASC,j.first_seen_at DESC,j.id DESC")
     if selected_filters.get("company_cards") and not selected_filters["company"]:
-        company_count = conn.execute("SELECT COUNT(DISTINCT c.id) " + where, params).fetchone()[0]
-        company_order = ("MIN(s.is_stale) ASC,MAX(CASE WHEN s.is_stale=0 THEN s.fit_score END) DESC,c.id ASC"
-                         if selected_filters["sort"] == "best" else "MIN(s.is_stale) ASC,MAX(j.first_seen_at) DESC,c.id ASC")
-        company_ids = [row[0] for row in conn.execute(
-            "SELECT c.id " + where + " GROUP BY c.id ORDER BY " + company_order + " LIMIT 6 OFFSET ?",
-            (*params, (selected_filters["page"] - 1) * 6))]
+        best = selected_filters["sort"] == "best"
+        company_sort = "best_score DESC" if best else "newest DESC"
+        role_sort = "f.fit_score DESC,f.job_id ASC" if best else "f.first_seen_at DESC,f.job_id DESC"
+        rows = conn.execute(f"""
+            WITH filtered AS MATERIALIZED (
+                SELECT j.id job_id,c.id company_id,s.is_stale,s.fit_score,j.first_seen_at {where}
+            ), grouped AS (
+                SELECT company_id,COUNT(*) company_openings,MIN(is_stale) stale,
+                       MAX(CASE WHEN is_stale=0 THEN fit_score END) best_score,MAX(first_seen_at) newest
+                FROM filtered GROUP BY company_id
+            ), totals AS (
+                SELECT COUNT(*) company_count,COALESCE(SUM(company_openings),0) opening_count FROM grouped
+            ), page AS (
+                SELECT *,ROW_NUMBER() OVER (ORDER BY stale,{company_sort},company_id) company_rank
+                FROM grouped ORDER BY company_rank LIMIT 6 OFFSET ?
+            ), roles AS (
+                SELECT f.job_id,p.company_rank,p.company_openings,
+                       ROW_NUMBER() OVER (PARTITION BY f.company_id ORDER BY f.is_stale,{role_sort}) card_rank
+                FROM filtered f JOIN page p USING (company_id)
+            )
+            SELECT {MATCH_COLUMNS},r.card_rank,r.company_openings,t.company_count,t.opening_count
+            FROM totals t LEFT JOIN roles r ON r.card_rank<=5
+            LEFT JOIN jobs j ON j.id=r.job_id LEFT JOIN companies c ON c.id=j.company_id
+            LEFT JOIN scores s ON s.job_id=j.id AND s.user_id=?
+            ORDER BY r.company_rank,r.card_rank
+        """, (*params, (selected_filters["page"] - 1) * 6, user_id)).fetchall()
+        company_count = rows[0]["company_count"]
         selected_filters["company_count"] = company_count
-        selected_filters["opening_count"] = count
-        if not company_ids:
-            return [], max(1, (company_count + 5) // 6)
-        placeholders = ",".join("?" for _ in company_ids)
-        rows = conn.execute("SELECT * FROM (SELECT " + MATCH_COLUMNS +
-            ",ROW_NUMBER() OVER(PARTITION BY c.id ORDER BY " + order + ") card_rank," +
-            "COUNT(*) OVER(PARTITION BY c.id) company_openings " + where +
-            " AND c.id IN (" + placeholders + ")) WHERE card_rank<=5", (*params, *company_ids)).fetchall()
-        rank = {company_id: index for index, company_id in enumerate(company_ids)}
-        rows = sorted(rows, key=lambda row: (rank[row["company_id"]], row["card_rank"]))
-        return [match(row) for row in rows], max(1, (company_count + 5) // 6)
+        selected_filters["opening_count"] = rows[0]["opening_count"]
+        return [match(row) for row in rows if row["job_id"] is not None], max(1, (company_count + 5) // 6)
+    count = conn.execute("SELECT COUNT(*) " + where, params).fetchone()[0]
     rows = conn.execute("SELECT " + MATCH_COLUMNS + " " + where + " ORDER BY " + order + " LIMIT ? OFFSET ?",
                         (*params, PAGE_SIZE, (selected_filters["page"] - 1) * PAGE_SIZE)).fetchall()
     return [match(row) for row in rows], max(1, (count + PAGE_SIZE - 1) // PAGE_SIZE)
@@ -209,6 +223,11 @@ def summary(conn, user_id, now, weeks=8):
     application_counts = {status: 0 for status in STATUSES}
     for row in conn.execute("SELECT status,COUNT(*) count FROM applications WHERE user_id=? GROUP BY status", (user_id,)):
         application_counts[row["status"]] = row["count"]
+    return dict(metrics=metrics, trend=trend, by_company=by_company, application_counts=application_counts,
+                **resume_stats(conn, user_id))
+
+
+def resume_stats(conn, user_id):
     # JSON expansion is bounded by saved matching data and returns only the top skills.
     skill_counts = conn.execute("""SELECT skill,COUNT(*) count FROM (
         SELECT DISTINCT s.id,value skill FROM scores s JOIN jobs j ON j.id=s.job_id
@@ -216,9 +235,8 @@ def summary(conn, user_id, now, weeks=8):
         WHERE s.user_id=? AND s.is_stale=0 AND j.is_active=1 AND c.active=1
         AND (NOT EXISTS(SELECT 1 FROM user_settings WHERE user_id=? AND subscriptions_configured=1)
           OR EXISTS(SELECT 1 FROM company_subscriptions WHERE user_id=? AND company_id=c.id))
-        ) GROUP BY skill ORDER BY count DESC,skill LIMIT 15""", params).fetchall()
-    return dict(metrics=metrics, trend=trend, by_company=by_company, application_counts=application_counts,
-                skills=skill_counts,
+        ) GROUP BY skill ORDER BY count DESC,skill LIMIT 15""", (user_id,) * 3).fetchall()
+    return dict(skills=skill_counts,
                 stale_count=conn.execute("SELECT COUNT(*) FROM scores WHERE user_id=? AND is_stale=1", (user_id,)).fetchone()[0])
 
 

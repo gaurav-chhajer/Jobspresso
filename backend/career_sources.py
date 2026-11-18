@@ -103,6 +103,36 @@ SOURCES = {
     'sprinto': ('Sprinto', 'lever', 'https://api.lever.co'),
     'jobgether': ('Jobgether (hiring platform)', 'lever_paged', 'https://api.lever.co'),
     'weekday': ('Weekday (hiring platform)', 'lever', 'https://api.lever.co'),
+    'apryse': ('Apryse', 'lever', 'https://api.lever.co'),
+    'twilio': ('Twilio', 'greenhouse', 'https://boards-api.greenhouse.io'),
+    'ocrolus': ('Ocrolus', 'greenhouse', 'https://boards-api.greenhouse.io'),
+    'chainguard': ('Chainguard', 'greenhouse', 'https://boards-api.greenhouse.io'),
+    'minio': ('MinIO', 'greenhouse', 'https://boards-api.greenhouse.io'),
+    'renaissance': ('Renaissance Learning', 'greenhouse', 'https://boards-api.greenhouse.io'),
+    'logicgate': ('LogicGate', 'greenhouse', 'https://boards-api.greenhouse.io'),
+    'faire': ('Faire', 'greenhouse', 'https://boards-api.greenhouse.io'),
+    'cengage': ('Cengage Group', 'workday', 'https://cengage.wd5.myworkdayjobs.com'),
+    'vgs': ('VGS (Very Good Security)', 'lever', 'https://api.lever.co'),
+    'usergems': ('UserGems', 'greenhouse', 'https://boards-api.greenhouse.io'),
+    'abnormal': ('Abnormal AI', 'greenhouse', 'https://boards-api.greenhouse.io'),
+    'cloudbeds': ('Cloudbeds', 'greenhouse', 'https://boards-api.greenhouse.io'),
+    'missionwired': ('MissionWired', 'lever', 'https://api.lever.co'),
+    'patreon': ('Patreon', 'ashby', 'https://api.ashbyhq.com'),
+    'teikametrics': ('Teikametrics', 'greenhouse', 'https://boards-api.greenhouse.io'),
+    'workera': ('Workera', 'greenhouse', 'https://boards-api.greenhouse.io'),
+    'valtech': ('Valtech', 'greenhouse', 'https://boards-api.greenhouse.io'),
+    'schneidergeospatial': ('Schneider Geospatial', 'lever', 'https://api.lever.co'),
+    'protective': ('Protective Life', 'lever', 'https://api.lever.co'),
+    'phdata': ('phData', 'greenhouse', 'https://boards-api.greenhouse.io'),
+    'upstart': ('Upstart', 'greenhouse', 'https://boards-api.greenhouse.io'),
+    'akamai': ('Akamai Technologies', 'oracle', 'https://fa-extu-saasfaprod1.fa.ocs.oraclecloud.com'),
+    'awesomemotive': ('Awesome Motive', 'workable', 'https://apply.workable.com'),
+    'docker': ('Docker', 'ashby', 'https://api.ashbyhq.com'),
+    'himsandhers': ('Hims & Hers', 'ashby', 'https://api.ashbyhq.com'),
+    'constructor': ('Constructor', 'ashby', 'https://api.ashbyhq.com'),
+    'resilinc': ('Resilinc', 'lever', 'https://api.lever.co'),
+    'workiva': ('Workiva', 'workday', 'https://workiva.wd503.myworkdayjobs.com'),
+    'kong': ('Kong', 'ashby', 'https://api.ashbyhq.com'),
 }
 VERIFIED_WORLDWIDE_SOURCES = ('supabase', 'camunda', 'livekit', 'atticus', 'alpaca',
                               'canonical', 'kindred', 'assemblyai', 'instrumentl',
@@ -113,18 +143,28 @@ VERIFIED_WORLDWIDE_SOURCES = ('supabase', 'camunda', 'livekit', 'atticus', 'alpa
                               'highlevel', 'gitlab', 'grafana', 'wikimedia', 'remote',
                               'atlassian', 'toptal', 'deel', 'elastic', 'zapier',
                               'automattic', 'shopify', 'github', 'drivetrain',
-                              'smartworking', 'sprinto', 'jobgether', 'weekday', 'yc')
+                              'smartworking', 'sprinto', 'jobgether', 'weekday', 'yc',
+                              'apryse', 'twilio', 'ocrolus', 'chainguard', 'minio', 'renaissance',
+                              'logicgate', 'faire', 'cengage', 'vgs', 'usergems', 'abnormal',
+                              'cloudbeds', 'missionwired', 'patreon', 'teikametrics', 'workera',
+                              'valtech', 'schneidergeospatial', 'protective', 'phdata', 'upstart', 'akamai',
+                              'awesomemotive', 'docker', 'himsandhers', 'constructor', 'resilinc', 'workiva', 'kong')
 BOARD_SLUGS = {'instrumentl': 'Instrumentl', 'sourcegraph': 'sourcegraph91',
                'xapo': 'xapo61', 'clearer': 'Clearer', 'highlevel': 'gohighlevel',
                'grafana': 'grafanalabs', 'duckduckgo': 'duck-duck-go',
                'automattic': 'automatticcareers', 'smartworking': 'smart-working-solutions',
-               'sprinto': 'Sprinto', 'weekday': 'weekdayworks'}
+               'sprinto': 'Sprinto', 'weekday': 'weekdayworks', 'ocrolus': 'ocrolusinc',
+               'renaissance': 'renaissancelearning-nam', 'vgs': 'verygoodsecurity',
+               'abnormal': 'abnormalsecurity', 'missionwired': 'MissionWired',
+               'schneidergeospatial': 'schneidergis', 'himsandhers': 'hims-and-hers'}
 WORKDAY = {'synechron': ('synechron', 'SynechronCareers'), 'hotstar': ('jiostar', 'JioStar'), 'bofa': ('ghr', 'lateral-us'),
            'postman': ('postman', 'careers'), 'pwc': ('pwc', 'Global_Experienced_Careers'),
            'salesforce': ('salesforce', 'External_Career_Site'),
-           'adobe': ('adobe', 'external_experienced'), 'slack': ('salesforce', 'Slack')}
-ORACLE = {'dpworld': 'CX_1', 'jpmorgan': 'CX_1001'}
-WORKABLE_ACCOUNTS = {'cloudlinux': 'cloudlinux-1', 'passion': 'passionio'}
+           'adobe': ('adobe', 'external_experienced'), 'slack': ('salesforce', 'Slack'),
+           'cengage': ('cengage', 'CengageNorthAmericaCareers'),
+           'workiva': ('workiva', 'careers')}
+ORACLE = {'dpworld': 'CX_1', 'jpmorgan': 'CX_1001', 'akamai': 'CX_1'}
+WORKABLE_ACCOUNTS = {'cloudlinux': 'cloudlinux-1', 'passion': 'passionio', 'awesomemotive': 'awesomemotive'}
 # Keep the adapters available for explicit read-only verification, but do not
 # enable new subscriptions until live listing and full-description checks pass.
 UNVERIFIED_SOURCES = frozenset(('microsoft',))
@@ -719,7 +759,7 @@ def _listings(feed, rows=None):
                 batch.append(job(key, identifier, item['name'], '; '.join(locations) or None,
                                  origin + path, version=item.get('postedTs'), department=item.get('department')))
         elif kind == 'eightfold':
-            domain = 'hsbc.com' if key == 'hsbc' else 'netflix.com'
+            domain = {'hsbc': 'hsbc.com', 'netflix': 'netflix.com', 'symetra': 'symetra.com'}[key]
             payload = feed.json('/api/apply/v2/jobs', params=dict(domain=domain, start=len(rows), num=10))
             count, items = total(payload['count']), payload['positions']
             batch = []

@@ -555,6 +555,50 @@ class CloudEndpointTests(unittest.TestCase):
         self.assertEqual(fetch.call_count, 2)
         self.assertIn('direct career sources will continue', '\n'.join(logs.output))
 
+    def test_fetch_resumes_after_saved_company_and_resets_after_full_pass(self):
+        companies = [dict(id=identifier, ats_type='greenhouse', board_slug='board-%s' % identifier,
+                          fingerprint='fingerprint-%s' % identifier) for identifier in (1, 2, 3)]
+        snapshots, progress = [], []
+        client = MagicMock()
+
+        def hosted_call(route, data=None):
+            if route == 'companies':
+                return {'companies': companies}
+            snapshots.append(data['company_id'])
+            return {'saved': True}
+
+        client.call.side_effect = hosted_call
+        with patch.object(runner, 'configured_tavily_keys', return_value=()), \
+                patch.object(pipeline, 'fetch_jobs_for_company', return_value=[]), \
+                patch.object(runner.time, 'monotonic', return_value=0):
+            self.assertEqual(runner._fetch_and_score(
+                client, 3000, True, None, allow_partial=True, start_after_company_id=1,
+                progress_callback=progress.append), 0)
+        self.assertEqual(snapshots, [2, 3, 1])
+        self.assertEqual(progress, [2, 3, 1, None])
+
+    def test_fetch_budget_keeps_success_and_cursor_for_next_pass(self):
+        companies = [dict(id=identifier, ats_type='greenhouse', board_slug='board-%s' % identifier,
+                          fingerprint='fingerprint-%s' % identifier) for identifier in (1, 2)]
+        snapshots, progress = [], []
+        client = MagicMock()
+        client.call.side_effect = lambda route, data=None: (
+            {'companies': companies} if route == 'companies' else snapshots.append(data['company_id']))
+        first_download = MagicMock()
+        first_download.result.return_value = []
+        second_download = MagicMock()
+        second_download.result.return_value = []
+        from contextlib import nullcontext
+        with patch.object(runner, 'configured_tavily_keys', return_value=()), \
+                patch.object(runner, 'parallel_downloads',
+                             return_value=nullcontext(iter(((companies[0], first_download),
+                                                            (companies[1], second_download))))), \
+                patch.object(runner.time, 'monotonic', side_effect=(0, 0, 1000)):
+            self.assertEqual(runner._fetch_and_score(
+                client, 1000, True, None, allow_partial=True, progress_callback=progress.append), 0)
+        self.assertEqual(snapshots, [1])
+        self.assertEqual(progress, [1])
+
     def test_deterministic_provider_scores_hosted_jobs_without_groq(self):
         client = MagicMock()
         def hosted_call(route, data=None):

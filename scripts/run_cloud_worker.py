@@ -372,14 +372,26 @@ def parallel_downloads(companies, deadline, stop):
         executor.shutdown(wait=True, cancel_futures=True)
 
 
-def _fetch_and_score(client, deadline, fetch_only, pool, stop=None, *, allow_partial=False):
+def _fetch_and_score(client, deadline, fetch_only, pool, stop=None, *, allow_partial=False,
+                     start_after_company_id=None, progress_callback=None):
     if not fetch_only and getattr(pool, "requires_groq", True) and not pipeline.GROQ_API_KEY.strip():
         raise ValueError("Configure Groq before matching")
+    if (start_after_company_id is not None and
+            (type(start_after_company_id) is not int or start_after_company_id <= 0)):
+        raise ValueError("Fetch cursor must be a positive company ID")
+    if progress_callback is not None and not callable(progress_callback):
+        raise ValueError("Fetch progress callback must be callable")
     companies = client.call("companies").get("companies")
     if not isinstance(companies, list) or len(companies) > MAX_COMPANIES:
         raise ValueError("Invalid company list")
+    if start_after_company_id is not None:
+        start = next((index for index, company in enumerate(companies)
+                      if isinstance(company, dict) and type(company.get("id")) is int and
+                      company["id"] > start_after_company_id), 0)
+        companies = companies[start:] + companies[:start]
     successful = set()
     failed = False
+    budget_exhausted = False
     tavily_keys = configured_tavily_keys()
     logger.info('Role-title web discovery enabled=%s configured_key_slots=%s',
                 bool(tavily_keys), len(tavily_keys))
@@ -397,7 +409,9 @@ def _fetch_and_score(client, deadline, fetch_only, pool, stop=None, *, allow_par
                 return 1
             if time.monotonic() >= deadline - 120:
                 logger.error("Fetching time budget reached; unfinished work waits until the next scheduled run")
-                return 1
+                failed = True
+                budget_exhausted = True
+                break
             stage = "configuration"
             try:
                 if (not isinstance(company, dict) or type(company.get("id")) is not int or
@@ -432,8 +446,15 @@ def _fetch_and_score(client, deadline, fetch_only, pool, stop=None, *, allow_par
                              company_id if type(company_id) is int else "invalid", stage, type(error).__name__,
                              response.status_code if response is not None else "unavailable")
                 failed = True
+            if (progress_callback is not None and isinstance(company, dict) and
+                    type(company.get("id")) is int and company["id"] > 0):
+                progress_callback(company["id"])
+    if not budget_exhausted and (stop is None or not stop.is_set()) and progress_callback is not None:
+        progress_callback(None)
     logger.info("Fetch summary: boards_succeeded=%s boards_total=%s partial_failure=%s",
                 len(successful), len(companies), failed)
+    if budget_exhausted and not successful:
+        return 1
     if not successful:
         raise RuntimeError("No boards fetched successfully")
     if fetch_only:

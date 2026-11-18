@@ -26,7 +26,7 @@ TAXONOMY_VERSION = _TAXONOMY["taxonomy_version"]
 IMPLIES = {source: tuple(targets) for source, targets in _TAXONOMY["implies"].items()}
 BLOCKED_SKILL_PAIRS = frozenset(frozenset(pair) for pair in _TAXONOMY["blocked_pairs"])
 FUZZY_SKILL_THRESHOLD = 0.92
-PARSER_VERSION = "jd-requirements-v24"
+PARSER_VERSION = "jd-requirements-v25"
 
 
 _SECTION_NAMES = {
@@ -47,7 +47,8 @@ _SECTION_NAMES = {
                      "we'd love to hear from you if you have", "qualifications and skills",
                      "key skills & competencies", "required skills and qualifications",
                      "what are we looking for", "must have qualifications", "the experience we need",
-                     "what you'll bring to the role", "what do we expect from you",
+                     "what you'll bring to the role", "what you'll bring to the table", "candidate persona",
+                     "what do we expect from you",
                      "expectations/ requirements", "essential skills", "qualifications and education requirements",
                      "skills that will help you succeed in this role", "superpowers/ skills that will help you succeed in this role"),
     "non_requirements": ("benefits", "benefits & perks", "benefits and perks", "perks", "compensation",
@@ -60,7 +61,7 @@ _SECTION_NAMES = {
                           "location", "locations", "work location", "remote", "remote-first",
                           "where you'll be", "pay transparency disclosure", "a note on compensation",
                           "your sales environment", "compensation, perks & benefits", "why you'll love it here",
-                          "recruitment fraud alert", "recruiting security"),
+                          "recruitment fraud alert", "recruiting security", "why this role", "what we are building"),
     "responsibilities": ("responsibilities", "what you will do", "what you'll do", "the role",
                           "about the role", "job responsibilities", "key responsibilities",
                           "key job responsibilities", "core responsibilities", "what you'll be doing",
@@ -136,6 +137,8 @@ def _section_header(line):
     if re.fullmatch(r"while (?:it'?s )?not required,? (?:it'?s )?an added plus if you also have", cleaned):
         return "nice_to_have"
     if re.fullmatch(r"what you(?:'ll| will) do at [a-z0-9 &'.-]{1,80}", cleaned):
+        return "responsibilities"
+    if re.fullmatch(r"what you(?:'ll| will) own(?: as [a-z0-9 &'/.,()-]{1,100})?", cleaned):
         return "responsibilities"
     if _NON_REQUIREMENTS_HEADING.fullmatch(cleaned):
         return "non_requirements"

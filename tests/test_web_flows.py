@@ -28,6 +28,7 @@ class WebFlowTests(unittest.TestCase):
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
         apply_migrations(self.conn)
+        self.conn.execute("DELETE FROM companies WHERE id > 100000")
         self.app = create_app(self.database, self.uploads)
         self.app.testing = True
         self.client = self.app.test_client()
@@ -65,10 +66,16 @@ class WebFlowTests(unittest.TestCase):
 
     def test_jobs_pagination_reports_request_timings(self):
         self.seed_user()
-        response = self.client.get('/jobs?page=2')
+        with patch('backend.app.store.location_suggestions', wraps=location_suggestions) as suggestions:
+            self.client.get('/jobs').close()
+            response = self.client.get('/jobs?page=2')
+            self.addCleanup(response.close)
+            self.assertEqual(suggestions.call_count, 1)
         self.assertEqual(response.status_code, 200)
-        for stage in ('summary', 'digest', 'matches', 'locations', 'render', 'app'):
+        for stage in ('matches', 'locations', 'render', 'app'):
             self.assertRegex(response.headers['Server-Timing'], rf'\b{stage};dur=\d+')
+        self.assertNotIn('summary;', response.headers['Server-Timing'])
+        self.assertNotIn('digest;', response.headers['Server-Timing'])
 
     def settings_data(self, **overrides):
         values = dict(name="Owner", email="owner@example.test", university="College", graduation_year="2027",
@@ -284,7 +291,7 @@ class WebFlowTests(unittest.TestCase):
         before = self.conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
         apply_migrations(self.conn)
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], before)
-        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0], 37)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0], 56)
 
     def test_deterministic_breakdown_is_saved_without_evidence_section(self):
         self.seed_user()
@@ -570,11 +577,30 @@ class WebFlowTests(unittest.TestCase):
                     self.assertNotIn(b'class="hero-banner"', page.data)
                 self.assertNotIn(b'class="spark"', page.data)
                 if route == '/jobs':
-                    self.assertIn(b'Scores are being updated.', page.data)
-                    self.assertIn(b'Score updating', page.data)
+                    self.assertNotIn(b'Rescoring', page.data)
+                    self.assertNotIn(b'Software Engineer 1', page.data)
                 if route == '/applications':
                     self.assertEqual(page.data.count(b'class="col-empty"'), len(STATUSES))
         self.assertIn(b"0 current resume-to-JD comparisons", self.client.get("/").data)
+
+    def test_job_matches_hide_stale_and_admin_location_exclusions(self):
+        self.seed_user()
+        self.conn.execute("UPDATE accounts SET is_admin=1 WHERE user_id=1")
+        self.conn.execute('UPDATE users SET preferences_json=? WHERE id=1',
+                          (json.dumps(dict(admin_india_only=True)),))
+        self.conn.execute("UPDATE jobs SET location='India' WHERE id=1")
+        self.conn.commit()
+        with self.client.get('/jobs') as page:
+            self.assertEqual(page.status_code, 200)
+            self.assertIn(b'Software Engineer 1', page.data)
+            self.assertNotIn(b'Software Engineer 2', page.data)
+        with self.client.get('/jobs?job=2') as page:
+            self.assertEqual(page.status_code, 404)
+        self.conn.execute('UPDATE scores SET is_stale=1 WHERE job_id=1')
+        self.conn.commit()
+        with self.client.get('/jobs?job=1') as page:
+            self.assertEqual(page.status_code, 404)
+            self.assertNotIn(b'Rescoring', page.data)
 
     def test_setup_banner_remains_available_until_profile_is_complete(self):
         self.seed_user()

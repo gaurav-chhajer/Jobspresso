@@ -10,6 +10,48 @@ from backend import career_sources as sources
 
 
 class CareerSourceTests(unittest.TestCase):
+    def test_verified_employer_feeds_return_complete_job_descriptions(self):
+        expected = {
+            'apryse': ('lever', 'apryse'),
+            'twilio': ('greenhouse', 'twilio'),
+            'ocrolus': ('greenhouse', 'ocrolusinc'),
+            'chainguard': ('greenhouse', 'chainguard'),
+            'minio': ('greenhouse', 'minio'),
+            'renaissance': ('greenhouse', 'renaissancelearning-nam'),
+            'logicgate': ('greenhouse', 'logicgate'),
+            'faire': ('greenhouse', 'faire'),
+            'cengage': ('workday', 'cengage'),
+            'vgs': ('lever', 'verygoodsecurity'),
+            'usergems': ('greenhouse', 'usergems'),
+            'abnormal': ('greenhouse', 'abnormalsecurity'),
+            'cloudbeds': ('greenhouse', 'cloudbeds'),
+            'missionwired': ('lever', 'MissionWired'),
+            'patreon': ('ashby', 'patreon'),
+            'teikametrics': ('greenhouse', 'teikametrics'),
+            'workera': ('greenhouse', 'workera'),
+            'valtech': ('greenhouse', 'valtech'),
+            'schneidergeospatial': ('lever', 'schneidergis'),
+            'protective': ('lever', 'protective'),
+            'phdata': ('greenhouse', 'phdata'),
+            'upstart': ('greenhouse', 'upstart'),
+            'akamai': ('oracle', 'akamai'),
+            'awesomemotive': ('workable', 'awesomemotive'),
+            'docker': ('ashby', 'docker'),
+            'himsandhers': ('ashby', 'hims-and-hers'),
+            'constructor': ('ashby', 'constructor'),
+            'resilinc': ('lever', 'resilinc'),
+            'workiva': ('workday', 'workiva'),
+            'kong': ('ashby', 'kong'),
+        }
+        for key, (kind, slug) in expected.items():
+            with self.subTest(key=key):
+                self.assertEqual(sources.SOURCES[key][1], kind)
+                self.assertEqual(sources.BOARD_SLUGS.get(key, key), slug)
+                self.assertIn(key, sources.VERIFIED_WORLDWIDE_SOURCES)
+        self.assertEqual(sources.ORACLE['akamai'], 'CX_1')
+        self.assertEqual(sources.WORKABLE_ACCOUNTS['awesomemotive'], 'awesomemotive')
+        self.assertEqual(sources.WORKDAY['workiva'], ('workiva', 'careers'))
+
     def google_candidate(self):
         url = 'https://www.google.com/about/careers/applications/jobs/results/90108035430523590-software-engineer/'
         candidate = sources.job('google', '90108035430523590', 'Software Engineer', 'India', url)

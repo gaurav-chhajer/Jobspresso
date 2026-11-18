@@ -808,7 +808,6 @@ def score_job_deterministic(user_row, job_row, company_name, scorer):
     description = extract_job_description(job)
     resume_text = user_row["resume_text"]
     resume_hash = deterministic_store.content_hash(resume_text)
-    jd_hash = deterministic_store.content_hash(description)
     parsed_jd_hash = deterministic_store.parsed_jd_hash(
         description, deterministic_scoring.extraction.PARSER_VERSION)
     score_jd_hash = deterministic_store.content_hash(job["title"] + "\n" + description)
@@ -829,13 +828,12 @@ def score_job_deterministic(user_row, job_row, company_name, scorer):
             deterministic_store.put_jd_requirements(conn, parsed_jd_hash, requirements)
         from backend import groq_requirement_assessor
         requirement_assessments = groq_requirement_assessor.assess(requirements, primary_key=GROQ_API_KEY)
-        semantic = semantic_similarity.section_similarity(
-            resume_text, description, scorer, resume_owner=resume_hash, jd_owner=jd_hash)
         resume_mentions = deterministic_scoring.extraction.extract_skill_mentions(resume_text)
         jd_mentions = deterministic_scoring.extraction.extract_skill_mentions(description)
         fuzzy_pairs = semantic_similarity.fuzzy_skill_matches(resume_mentions, jd_mentions, scorer)
         fuzzy_pairs = deterministic_scoring.pending_fuzzy_matches(resume_text, description, fuzzy_pairs)
-        cached = deterministic_scoring.score(resume_text, description, semantic, job_title=job["title"],
+        # The current rubric uses duty evidence instead of section similarity.
+        cached = deterministic_scoring.score(resume_text, description, 0.0, job_title=job["title"],
                                              as_of_date=as_of, fuzzy_skill_pairs=fuzzy_pairs,
                                              requirement_assessments=requirement_assessments)
         cached["explanation"] = _deterministic_explanation(cached)
