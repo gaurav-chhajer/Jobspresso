@@ -5,6 +5,7 @@ import json
 import re
 import secrets
 import sqlite3
+from time import perf_counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -65,7 +66,15 @@ def create_app(database_path=None, upload_dir=None):
                     by_company=[], skills=[], saved_searches=[], selected=None)
 
     def render(page, data, status=200):
-        return render_template(page + ".html", script_nonce=getattr(g, "script_nonce", None), **data), status
+        html = render_template(page + ".html", script_nonce=getattr(g, "script_nonce", None), **data)
+        mark_time("render")
+        return html, status
+
+    def mark_time(stage):
+        if "timing_start" in g:
+            now = perf_counter()
+            g.timings[stage] = round((now - g.timing_last) * 1000, 1)
+            g.timing_last = now
 
     def filter_arguments(fields):
         """Restore applied filters; explicit selections replace the saved set."""
@@ -86,6 +95,9 @@ def create_app(database_path=None, upload_dir=None):
 
     @application.before_request
     def protect_local_actions():
+        if request.method == "GET" and request.endpoint in {"jobs", "resume", "admin.page"}:
+            g.timing_start = g.timing_last = perf_counter()
+            g.timings = {}
         allowed = (origin.removeprefix("https://"),) if hosted else ("localhost", "127.0.0.1")
         if request.host.split(":")[0].lower() not in allowed:
             return "This hostname is not configured for Jobspresso.", 403
@@ -219,6 +231,13 @@ def create_app(database_path=None, upload_dir=None):
             )
         if request.endpoint in ('workflow_monitor_page', 'jobs'):
             response.headers['Content-Security-Policy'] += "; connect-src 'self'"
+        if "timing_start" in g and g.get("user"):
+            mark_time("finish")
+            total = round((perf_counter() - g.timing_start) * 1000, 1)
+            response.headers["Server-Timing"] = ", ".join(
+                f"{name};dur={ms}" for name, ms in {**g.timings, "app": total}.items())
+            application.logger.warning("Page timing endpoint=%s status=%s total_ms=%s stages_ms=%s",
+                                       request.endpoint, response.status_code, total, g.timings)
         return response
 
     @application.errorhandler(413)
@@ -282,11 +301,15 @@ def create_app(database_path=None, upload_dir=None):
             return
         conn = connection()
         user_id = data["user"]["id"]
+        mark_time("setup")
         data.update(store.summary(conn, user_id, utc_now()))
+        mark_time("summary")
         data["companies"] = conn.execute("""SELECT DISTINCT c.id,c.name FROM scores s
             JOIN jobs j ON j.id=s.job_id JOIN companies c ON c.id=j.company_id
             WHERE s.user_id=? AND s.is_stale=0 AND j.is_active=1 AND c.active=1 ORDER BY c.name,c.id LIMIT 1000""", (user_id,)).fetchall()
+        mark_time("companies")
         data["digest"] = [store.match(row) for row in get_unsent_top_matches(conn, user_id)]
+        mark_time("digest")
 
     @application.get("/")
     def dashboard():
@@ -350,8 +373,10 @@ def create_app(database_path=None, upload_dir=None):
             user_id = data["user"]["id"]
             data["company_cards"] = True
             data["matches"], data["pages"] = store.matches(conn, user_id, data, utc_now(), include_stale=True)
+            mark_time("matches")
             data["has_stale_matches"] = any(item["is_stale"] for item in data["matches"])
             data["job_locations"] = store.location_suggestions(conn)
+            mark_time("locations")
             data["company_groups"] = []
             for item in data["matches"]:
                 if not data["company_groups"] or data["company_groups"][-1]["id"] != item["company_id"]:
@@ -388,6 +413,7 @@ def create_app(database_path=None, upload_dir=None):
                 except ValueError:
                     application.logger.warning("Job description unavailable (job_id=%s)", data["selected"]["job_id"])
                     data["selected"]["description"] = "The saved posting has no usable description. Read the source posting before applying."
+        mark_time("details")
         return render("jobs", data)
 
     def resume_draft_page(job, improved_resume, message, status=200):

@@ -63,6 +63,13 @@ class WebFlowTests(unittest.TestCase):
         self.addCleanup(response.request.input_stream.close)
         return response
 
+    def test_jobs_pagination_reports_request_timings(self):
+        self.seed_user()
+        response = self.client.get('/jobs?page=2')
+        self.assertEqual(response.status_code, 200)
+        for stage in ('summary', 'digest', 'matches', 'locations', 'render', 'app'):
+            self.assertRegex(response.headers['Server-Timing'], rf'\b{stage};dur=\d+')
+
     def settings_data(self, **overrides):
         values = dict(name="Owner", email="owner@example.test", university="College", graduation_year="2027",
                       cadence="daily", send_time="08:00", timezone="Asia/Kolkata", min_score="70", include_gaps="on",
