@@ -177,8 +177,9 @@ class CompanySeedTests(unittest.TestCase):
             conn.commit()
             apply_migrations(conn)
             apply_migrations(conn)
-            self.assertEqual(conn.execute('SELECT id,career_source,career_source_legacy FROM companies').fetchall(),
-                             [(7, 'wipro', 'wipro')])
+            self.assertEqual(conn.execute('SELECT career_source,career_source_legacy FROM companies WHERE id=7').fetchone(),
+                             ('wipro', 'wipro'))
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM companies WHERE board_slug IN ('shipbobinc','clickhouse')").fetchone()[0], 2)
             with self.assertRaises(sqlite3.IntegrityError):
                 conn.execute("INSERT INTO companies(name,ats_type,board_slug,career_source) VALUES('Invalid','greenhouse','invalid','unknown')")
             with self.assertRaises(sqlite3.IntegrityError):

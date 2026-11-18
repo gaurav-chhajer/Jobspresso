@@ -74,7 +74,7 @@ class SaasSourceTests(unittest.TestCase):
             return dict(meta=dict(total=1), jobs=[dict(
                 id=123, title=title, location=dict(name='India'), departments=[dict(name='Engineering')],
                 absolute_url='https://careers.airbnb.com/positions/123/', content=description)])
-        if key in ('cloudlinux', 'passion'):
+        if key in ('cloudlinux', 'passion', 'awesomemotive'):
             shortcode = 'WL1'
             return dict(jobs=[dict(shortcode=shortcode, title=title, department='Engineering',
                                    employment_type='full_time', locations=[dict(country='India')],
