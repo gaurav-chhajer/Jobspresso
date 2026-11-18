@@ -159,7 +159,7 @@ class CompanySeedTests(unittest.TestCase):
                 self.assertEqual(saved.execute('SELECT name FROM companies').fetchall(), [('Original',)])
                 self.assertNotIn('career_source', [row[1] for row in saved.execute('PRAGMA table_info(companies)')])
                 self.assertEqual(current.execute("SELECT id,name FROM companies WHERE board_slug='original'").fetchall(), [(1, 'Original')])
-                self.assertEqual(current.execute('SELECT COUNT(*) FROM schema_migrations').fetchone()[0], 56)
+                self.assertEqual(current.execute('SELECT COUNT(*) FROM schema_migrations').fetchone()[0], 57)
 
     def test_source_extension_preserves_existing_source_and_constraints(self):
         import hashlib
@@ -180,6 +180,7 @@ class CompanySeedTests(unittest.TestCase):
             self.assertEqual(conn.execute('SELECT career_source,career_source_legacy FROM companies WHERE id=7').fetchone(),
                              ('wipro', 'wipro'))
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM companies WHERE board_slug IN ('shipbobinc','clickhouse')").fetchone()[0], 2)
+            self.assertEqual(conn.execute("SELECT active FROM companies WHERE career_source='kong'").fetchone(), (1,))
             with self.assertRaises(sqlite3.IntegrityError):
                 conn.execute("INSERT INTO companies(name,ats_type,board_slug,career_source) VALUES('Invalid','greenhouse','invalid','unknown')")
             with self.assertRaises(sqlite3.IntegrityError):
