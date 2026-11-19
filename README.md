@@ -1661,3 +1661,9 @@ access. With --run, the command also fetches and stores jobs from active boards 
 to funding within the window. The existing matching worker scores eligible jobs
 using its configured company selection. The discovery command does not migrate
 the database, score jobs or send email.
+
+Every discovery run also retries saved unlinked leads within the 90-day
+window, even after their headlines have dropped out of RSS. Use
+`python -B -m scripts.run_funding_discovery --catalog-only --run` to link saved
+leads to unique existing catalog matches without network calls. Omit `--run`
+to preview those links.

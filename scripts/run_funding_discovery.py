@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--run', action='store_true', help='keep the recorded funding events and boards')
+    parser.add_argument('--catalog-only', action='store_true',
+                        help='link saved funding leads against the catalog without network calls')
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
     try:
@@ -27,9 +29,17 @@ def main(argv=None):
             conn.row_factory = sqlite3.Row
             conn.execute('PRAGMA foreign_keys=ON')
             conn.execute('BEGIN IMMEDIATE')
-            result = funding_discovery.run(conn)
+            if args.catalog_only:
+                now = datetime.now(timezone.utc)
+                result = funding_discovery.ingest(conn, (), None, now)
+            else:
+                result = funding_discovery.run(conn)
+            failures = 0
             if args.run:
                 conn.commit()
+            else:
+                conn.rollback()
+            if args.run and not args.catalog_only:
                 now = datetime.now(timezone.utc)
                 boards = conn.execute("""SELECT c.* FROM companies c WHERE c.active=1 AND c.discovery_only=0
                     AND EXISTS (SELECT 1 FROM funded_companies f WHERE f.company_id=c.id
@@ -45,8 +55,6 @@ def main(argv=None):
                         failures += 1
                         logger.warning('Funded board fetch failed: company_id=%s error=%s', board['id'], type(error).__name__)
                 logger.info('Funded boards=%s jobs_fetched=%s failures=%s', len(boards), total, failures)
-            else:
-                conn.rollback()
         logger.info('Funding discovery %s: recorded=%s boards_linked=%s',
                     'saved' if args.run else 'preview (nothing saved)', result['recorded'], result['linked'])
         return int(args.run and failures > 0)

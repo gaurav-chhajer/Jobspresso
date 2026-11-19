@@ -165,44 +165,52 @@ def ingest(conn, entries, resolve, now, days=RECENT_DAYS):
     """
     cutoff = now - timedelta(days=days)
     stamp = now.astimezone(timezone.utc).isoformat()
-    recorded = linked = probes = 0
-    for entry in sorted(entries, key=lambda e: e['published'], reverse=True):
+    recorded = 0
+    for entry in sorted(entries, key=lambda item: item['published']):
         name = company_name(entry['title'])
         key = key_of(name) if name else ''
         if not key or not cutoff <= entry['published'] <= now:
             continue
-        row = conn.execute('SELECT id,company_id FROM funded_companies WHERE name_key=?', (key,)).fetchone()
-        if row and row[1] is not None:
-            conn.execute('''UPDATE funded_companies SET headline=?,news_url=?,published_at=?
-                WHERE id=? AND julianday(published_at)<julianday(?)''',
-                (entry['title'], entry['link'], entry['published'].isoformat(), row[0], entry['published'].isoformat()))
-            continue
-        existing = [company for company in conn.execute(
-            "SELECT id,name FROM companies WHERE ats_type IN ('greenhouse','lever','ashby')")
-            if key_of(company[1]) == key]
-        slug = None
-        if not existing and probes < MAX_PROBES:
-            probes += 1
-            slug = resolve(name)
-        company_id = existing[0][0] if len(existing) == 1 else None
-        if company_id is not None:
-            linked += 1
-        if slug:
-            ats, slug = slug if isinstance(slug, tuple) else ('greenhouse', slug)
-            conn.execute("""INSERT OR IGNORE INTO companies(name,ats_type,board_slug,active)
-                VALUES(?, ?, ?, 1)""", (name, ats, slug))
-            company_id = conn.execute("SELECT id FROM companies WHERE ats_type=? AND board_slug=?",
-                                      (ats, slug)).fetchone()[0]
-            linked += 1
-        if row:
-            conn.execute('''UPDATE funded_companies SET company_id=?,headline=?,news_url=?,published_at=?
-                WHERE id=?''', (company_id, entry['title'], entry['link'], entry['published'].isoformat(), row[0]))
-        else:
-            conn.execute("""INSERT INTO funded_companies(name,name_key,headline,news_url,published_at,first_seen_at,company_id)
-                VALUES(?,?,?,?,?,?,?)""", (name, key, entry['title'], entry['link'],
-                                         entry['published'].isoformat(), stamp, company_id))
-            recorded += 1
+        params = (name, key, entry['title'], entry['link'], entry['published'].isoformat(), stamp)
+        inserted = conn.execute("""INSERT INTO funded_companies(name,name_key,headline,news_url,published_at,first_seen_at)
+            VALUES(?,?,?,?,?,?) ON CONFLICT(name_key) DO NOTHING""", params)
+        recorded += inserted.rowcount
+        if not inserted.rowcount:
+            conn.execute("""UPDATE funded_companies SET headline=?,news_url=?,published_at=?
+                WHERE name_key=? AND julianday(published_at)<julianday(?)""",
+                (*params[2:5], key, params[4]))
+    linked = link_pending(conn, resolve, cutoff, now)
     return dict(recorded=recorded, linked=linked)
+
+
+def link_pending(conn, resolve, cutoff, now):
+    """Connect stored funding leads to unique catalog companies or verified boards."""
+    catalog = {}
+    for company_id, name in conn.execute(
+            "SELECT id,name FROM companies WHERE ats_type IN ('greenhouse','lever','ashby')"):
+        catalog.setdefault(key_of(name), []).append(company_id)
+    leads = conn.execute("""SELECT id,name,name_key FROM funded_companies
+        WHERE company_id IS NULL AND julianday(published_at) BETWEEN julianday(?) AND julianday(?)
+        ORDER BY published_at DESC,id""", (cutoff.isoformat(), now.isoformat())).fetchall()
+    linked = probes = 0
+    for lead_id, name, key in leads:
+        existing = catalog.get(key, [])
+        company_id = existing[0] if len(existing) == 1 else None
+        if not existing and resolve is not None and probes < MAX_PROBES:
+            probes += 1
+            board = resolve(name)
+            if board:
+                ats, slug = board if isinstance(board, tuple) else ('greenhouse', board)
+                conn.execute("""INSERT INTO companies(name,ats_type,board_slug,active)
+                    VALUES(?,?,?,1) ON CONFLICT(ats_type,board_slug) DO NOTHING""", (name, ats, slug))
+                owner_id, owner_name = conn.execute(
+                    'SELECT id,name FROM companies WHERE ats_type=? AND board_slug=?', (ats, slug)).fetchone()
+                if key_of(owner_name) == key:
+                    company_id = owner_id
+        if company_id is not None:
+            conn.execute('UPDATE funded_companies SET company_id=? WHERE id=?', (company_id, lead_id))
+            linked += 1
+    return linked
 
 
 def run(conn, now=None, fetch=fetch_feed, resolve=None, feeds=FEEDS):

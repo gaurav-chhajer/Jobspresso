@@ -141,6 +141,26 @@ class IngestTests(unittest.TestCase):
                 self.assertEqual(result, dict(recorded=1, linked=1))
                 self.assertEqual(conn.execute('SELECT COUNT(*) FROM companies').fetchone()[0], 1)
 
+    def test_saved_lead_links_from_catalog_after_headline_leaves_feed(self):
+        with closing(database()) as conn:
+            fd.ingest(conn, [entry('Acme raises $1M')], None, NOW)
+            conn.execute("INSERT INTO companies(name,ats_type,board_slug) VALUES('Acme','lever','acme-careers')")
+            result = fd.ingest(conn, (), None, NOW + timedelta(days=2))
+            self.assertEqual(result, dict(recorded=0, linked=1))
+            self.assertEqual(conn.execute('SELECT company_id FROM funded_companies').fetchone()[0], 1)
+
+    def test_ambiguous_catalog_names_and_conflicting_boards_stay_unlinked(self):
+        with closing(database()) as conn:
+            conn.executemany("INSERT INTO companies(name,ats_type,board_slug) VALUES(?,?,?)", [
+                ('Acme', 'lever', 'acme'),
+                ('Acme Inc', 'ashby', 'acme'),
+                ('Other', 'lever', 'other'),
+            ])
+            result = fd.ingest(conn, [entry('Acme raises $1M'), entry('Beta raises $1M')],
+                               lambda name: ('lever', 'other'), NOW)
+            self.assertEqual(result, dict(recorded=2, linked=0))
+            self.assertEqual(conn.execute('SELECT count(company_id) FROM funded_companies').fetchone()[0], 0)
+
     def test_old_events_are_ignored(self):
         with closing(database()) as conn:
             result = fd.ingest(conn, [entry('Old Co raises $1M', days_ago=91)], lambda name: 'oldco', NOW)
