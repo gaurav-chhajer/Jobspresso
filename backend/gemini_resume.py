@@ -126,7 +126,7 @@ def recruiter_context():
         content = source.read(MAX_INSTRUCTION_BYTES + 1)
     if len(content) > MAX_INSTRUCTION_BYTES:
         raise ValueError('Recruiter instructions exceed 16 KB')
-    text = content.decode('utf-8')
+    text = content.decode('utf-8').replace('\r\n', '\n')
     context, separator, workflow = text.partition('\n## Workflow\n')
     if not separator or not context.strip() or not workflow.strip() or '\x00' in text:
         raise ValueError('Recruiter instructions require context and a Workflow section')
