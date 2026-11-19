@@ -486,6 +486,17 @@ def create_app(database_path=None, upload_dir=None):
         flash("Search saved.")
         return redirect(url_for("jobs", **query))
 
+    @application.route("/funded")
+    def funded():
+        data = context()
+        conn = connection() if database.is_file() else None
+        data["funded"] = conn.execute("""SELECT f.id,f.name,f.headline,f.news_url,f.published_at,f.company_id,
+            (SELECT COUNT(*) FROM jobs j WHERE j.company_id=f.company_id AND j.is_active=1) AS open_jobs,
+            (SELECT MAX(s.fit_score) FROM scores s JOIN jobs j ON j.id=s.job_id
+                WHERE j.company_id=f.company_id AND j.is_active=1 AND s.user_id=? AND s.is_stale=0) AS best_score
+            FROM funded_companies f WHERE julianday(f.published_at) BETWEEN julianday(?) AND julianday(?) ORDER BY f.published_at DESC LIMIT 100""", (data["user"]["id"], (utc_now()-timedelta(days=90)).isoformat(), utc_now().isoformat())).fetchall() if conn else []
+        return render("funded", data)
+
     @application.route("/settings", methods=["GET", "POST"])
     def settings_page():
         data = context()

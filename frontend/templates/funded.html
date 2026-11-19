@@ -1,0 +1,15 @@
+{% extends 'base.html' %}
+{% block title %}Recently funded · Jobspresso{% endblock %}
+{% block content %}
+<div class="top2"><div><h1>Recently funded</h1><p class="sub">Companies in recent funding news. Boards that could be verified are fetched and scored like any other company; the rest are leads to check by hand.</p></div><div class="actions"><a class="btn" href="{{ url_for('settings_page') }}#companies">Choose companies</a></div></div>
+<section class="card" aria-label="Recently funded companies">
+{% for item in funded %}
+<article class="funded-row" style="padding:12px 0;border-top:0.5px solid var(--border,#ddd)">
+<div><strong>{{ item.name }}</strong> <span class="sub">{{ item.published_at[:10] }}</span></div>
+<p class="sub"><a href="{{ item.news_url }}" rel="noopener noreferrer" target="_blank">{{ item.headline }}</a></p>
+{% if item.company_id %}<p class="sub">{{ item.open_jobs }} open {{ 'role' if item.open_jobs == 1 else 'roles' }}{% if item.best_score is not none %} · best match {{ item.best_score }}%{% endif %}{% if not item.open_jobs %} · waiting for the next fetch{% endif %}</p>
+{% else %}<p class="sub">No verified job board yet. Check the company's careers page.</p>{% endif %}
+</article>
+{% else %}<p class="sub">Nothing yet. Run <code>python -m scripts.run_funding_discovery --run</code> to collect recent funding news.</p>{% endfor %}
+</section>
+{% endblock %}

@@ -143,7 +143,7 @@ def filters(args):
                   only_mine=integer(args.get("only_mine", "0"), 0, 1))
     if len(result["search"]) > 200 or len(result["location"]) > 100:
         raise ValueError("Search or location is too long")
-    if result["job_type"] not in ("", "internship", "full-time", "part-time") or result["sort"] not in ("best", "recent"):
+    if result["job_type"] not in ("", "internship", "full-time", "part-time") or result["sort"] not in ("best", "recent", "funded"):
         raise ValueError("Unsupported job filter")
     return result
 
@@ -172,16 +172,24 @@ def matches(conn, user_id, selected_filters, now, include_stale=False):
         params.append({"internship": "%intern%", "full-time": "%full%", "part-time": "%part%"}[selected_filters["job_type"]])
     order = ("s.is_stale ASC,s.fit_score DESC,j.id ASC" if selected_filters["sort"] == "best"
              else "s.is_stale ASC,j.first_seen_at DESC,j.id DESC")
+    funding_order = ""
+    if selected_filters["sort"] == "funded":
+        funding_order = ("EXISTS(SELECT 1 FROM funded_companies funding WHERE funding.company_id=c.id "
+                         "AND julianday(funding.published_at) BETWEEN julianday(?) AND julianday(?))")
+        params.extend(((now - timedelta(days=90)).isoformat(), now.isoformat()))
+        order = funding_order + " DESC,s.is_stale ASC,s.fit_score DESC,j.id ASC"
     if selected_filters.get("company_cards") and not selected_filters["company"]:
-        best = selected_filters["sort"] == "best"
+        best = selected_filters["sort"] in ("best", "funded")
         company_sort = "best_score DESC" if best else "newest DESC"
+        if funding_order:
+            company_sort = "funded DESC," + company_sort
         role_sort = "f.fit_score DESC,f.job_id ASC" if best else "f.first_seen_at DESC,f.job_id DESC"
         rows = conn.execute(f"""
             WITH filtered AS MATERIALIZED (
-                SELECT j.id job_id,c.id company_id,s.is_stale,s.fit_score,j.first_seen_at {where}
+                SELECT j.id job_id,c.id company_id,s.is_stale,s.fit_score,j.first_seen_at{(',' + funding_order + ' funded') if funding_order else ''} {where}
             ), grouped AS (
                 SELECT company_id,COUNT(*) company_openings,MIN(is_stale) stale,
-                       MAX(CASE WHEN is_stale=0 THEN fit_score END) best_score,MAX(first_seen_at) newest
+                       MAX(CASE WHEN is_stale=0 THEN fit_score END) best_score,MAX(first_seen_at) newest{",MAX(funded) funded" if funding_order else ""}
                 FROM filtered GROUP BY company_id
             ), totals AS (
                 SELECT COUNT(*) company_count,COALESCE(SUM(company_openings),0) opening_count FROM grouped
@@ -198,12 +206,13 @@ def matches(conn, user_id, selected_filters, now, include_stale=False):
             LEFT JOIN jobs j ON j.id=r.job_id LEFT JOIN companies c ON c.id=j.company_id
             LEFT JOIN scores s ON s.job_id=j.id AND s.user_id=?
             ORDER BY r.company_rank,r.card_rank
-        """, (*params, (selected_filters["page"] - 1) * 6, user_id)).fetchall()
+        """, (*(params[-2:] + params[:-2] if funding_order else params), (selected_filters["page"] - 1) * 6, user_id)).fetchall()
         company_count = rows[0]["company_count"]
         selected_filters["company_count"] = company_count
         selected_filters["opening_count"] = rows[0]["opening_count"]
         return [match(row) for row in rows if row["job_id"] is not None], max(1, (company_count + 5) // 6)
-    count = conn.execute("SELECT COUNT(*) " + where, params).fetchone()[0]
+    count_params = params[:-2] if funding_order else params
+    count = conn.execute("SELECT COUNT(*) " + where, count_params).fetchone()[0]
     rows = conn.execute("SELECT " + MATCH_COLUMNS + " " + where + " ORDER BY " + order + " LIMIT ? OFFSET ?",
                         (*params, PAGE_SIZE, (selected_filters["page"] - 1) * PAGE_SIZE)).fetchall()
     return [match(row) for row in rows], max(1, (count + PAGE_SIZE - 1) // PAGE_SIZE)

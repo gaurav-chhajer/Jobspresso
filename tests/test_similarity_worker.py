@@ -146,8 +146,9 @@ class SimilaritySelectionTests(unittest.TestCase):
                         self.assertEqual(watcher.run_cycle("similarity"),0)
                         pending.assert_called_once()
                         email.assert_called_once()
-                        self.assertEqual(client.call.call_args_list[1].args[0],'snapshot')
-                        self.assertEqual(client.call.call_args_list[1].args[1]['company_id'],2)
+                        snapshots = [call.args[1] for call in client.call.call_args_list
+                                     if call.args[0] == 'snapshot']
+                        self.assertEqual([payload['company_id'] for payload in snapshots], [2])
                     else:
                         with self.assertRaisesRegex(RuntimeError,'No boards fetched'):
                             watcher.run_cycle("similarity")

@@ -31,6 +31,7 @@
 <nav class="primary-nav" id="primary-nav" aria-label="Main navigation"><span class="ind" id="ind" aria-hidden="true"><b></b></span>
 <a href="{{ url_for('dashboard') }}" {% if active == 'dashboard' %}aria-current="page"{% endif %}>Home</a>
 <a href="{{ url_for('jobs') }}" {% if active == 'jobs' %}aria-current="page"{% endif %}>Jobs</a>
+<a href="{{ url_for('funded') }}" {% if active == 'funded' %}aria-current="page"{% endif %}>Funded</a>
 <a href="{{ url_for('resume') }}" {% if active == 'resume' %}aria-current="page"{% endif %}>Resume</a>
 <a href="{{ url_for('applications') }}" {% if active in ('applications','analytics') %}aria-current="page"{% endif %}>Tracker</a>
 <a href="{{ url_for('settings_page') }}" {% if active == 'settings_page' %}aria-current="page"{% endif %}>Settings</a>
