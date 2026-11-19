@@ -213,15 +213,20 @@ def link_pending(conn, resolve, cutoff, now):
     return linked
 
 
-def run(conn, now=None, fetch=fetch_feed, resolve=None, feeds=FEEDS):
-    """Collect feeds and ingest them. A failing feed is skipped, never fatal."""
+def run(conn, now=None, fetch=fetch_feed, resolve=None, feeds=FEEDS, *, budget_seconds=TIME_BUDGET_SECONDS,
+        require_feed=False):
+    """Collect feeds and ingest them, optionally requiring a successful read."""
     now = now or datetime.now(timezone.utc)
-    deadline = time.monotonic() + TIME_BUDGET_SECONDS
+    deadline = time.monotonic() + budget_seconds
     resolve = resolve or (lambda name: resolve_board(name, deadline))
     entries = []
+    feeds_read = 0
     for url in feeds:
         try:
             entries += parse_feed(fetch(url, deadline))
+            feeds_read += 1
         except (requests.RequestException, ValueError, ET.ParseError) as error:
             logger.warning('Funding feed skipped: host=%s error=%s', urlsplit(url).hostname, type(error).__name__)
+    if require_feed and not feeds_read:
+        raise RuntimeError('No funding feeds could be read')
     return ingest(conn, entries, resolve, now)

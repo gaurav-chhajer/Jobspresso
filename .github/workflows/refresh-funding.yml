@@ -1,0 +1,31 @@
+name: Refresh funded companies
+
+on:
+  schedule:
+    # 08:00 and 20:00 India Standard Time.
+    - cron: '30 2,14 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: studentconnect-daily-automation
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Refresh funding leads and verify career boards
+        env:
+          WORKER_KEY: ${{ secrets.STUDENTCONNECT_WORKER_KEY }}
+        run: |
+          if [ -z "$WORKER_KEY" ]; then
+            echo "::error::Configure STUDENTCONNECT_WORKER_KEY in Actions secrets"
+            exit 1
+          fi
+          curl --fail --silent --show-error --connect-timeout 10 --max-time 90 \
+            --header "Authorization: Bearer $WORKER_KEY" \
+            --header 'Content-Type: application/json' --data '{}' \
+            https://gauravchhajer.pythonanywhere.com/internal/worker/funding-refresh

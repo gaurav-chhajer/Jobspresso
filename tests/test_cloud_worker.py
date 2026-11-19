@@ -53,6 +53,19 @@ class CloudEndpointTests(unittest.TestCase):
         self.addCleanup(response.request.input_stream.close)
         return response
 
+    def test_funding_refresh_requires_worker_credentials_and_empty_input(self):
+        with patch('backend.funding_discovery.run', return_value={'recorded': 2, 'linked': 1}) as refresh:
+            unauthorized = self.client.post('/internal/worker/funding-refresh', json={})
+            self.assertEqual(unauthorized.status_code, 401)
+            self.assertEqual(self.call('funding-refresh', {'url': 'https://example.com'}).status_code, 400)
+            refresh.assert_not_called()
+            response = self.call('funding-refresh', {})
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json, {'recorded': 2, 'linked': 1})
+            self.assertEqual(refresh.call_args.kwargs, {'budget_seconds': 30, 'require_feed': True})
+            refresh.side_effect = RuntimeError('No funding feeds could be read')
+            self.assertEqual(self.call('funding-refresh', {}).status_code, 503)
+
     def test_rescore_boilerplate_only_requeues_exact_noise_items(self):
         self.conn.execute("UPDATE scores SET is_stale=0,missing_requirements=? WHERE job_id=1",
                           (json.dumps(["How", "Benefits", "AWS"]),))

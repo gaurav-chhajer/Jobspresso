@@ -168,6 +168,16 @@ def register_routes(application, connection, database):
         worker_health.save(connection(), body())
         return {'saved': True}
 
+    @routes.post('/funding-refresh')
+    def funding_refresh():
+        from backend import funding_discovery
+
+        if body() != {}:
+            raise ValueError('Funding refresh accepts no parameters')
+        conn = connection()
+        with run_pipeline.exclusive_cycle(Path(database).parent / 'pipeline.lock'), conn:
+            return funding_discovery.run(conn, budget_seconds=30, require_feed=True)
+
     @routes.post('/sync-catalog')
     def sync_catalog():
         from backend.career_sources import SOURCES, UNVERIFIED_SOURCES, VERIFIED_WORLDWIDE_SOURCES
