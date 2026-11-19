@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 CHECK_INTERVAL_SECONDS = 5 * 60
 LOCK_PATH = Path(__file__).resolve().parents[1] / "data" / "hosted_worker.lock"
 QUEUE_POLL_SECONDS = 30
+EMAIL_CHECK_SECONDS = 60 * 60
 WRITE_LOCK_SECONDS = 120
 READ_ATTEMPTS = 3
 READ_BACKOFF_SECONDS = 30
@@ -154,7 +155,8 @@ def _score_loop(client, stop, ready, email_state=None, quota=None, scorer=None):
             if status and not stop.is_set():
                 logger.error("Scoring loop stopped; pending jobs remain queued. Review logs before restarting.")
             return int(bool(status) or email_state["paused"])
-        if not email_state["paused"]:
+        if not email_state["paused"] and time.monotonic() >= email_state.get('next_check', 0):
+            email_state['next_check'] = time.monotonic() + EMAIL_CHECK_SECONDS
             try:
                 email_status = worker.send_emails(client, time.monotonic() + worker.EMAIL_SECONDS, matches_only=True)
             except (requests.RequestException, OSError, RuntimeError, ValueError, KeyError, TypeError) as error:

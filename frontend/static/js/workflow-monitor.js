@@ -13,15 +13,6 @@
   function fitMenu() { if (menu) menu.open = !mobile.matches; }
   fitMenu();
   mobile.addEventListener('change', fitMenu);
-  function formatTimes() {
-    document.querySelectorAll('#monitor-live time[datetime]').forEach(element => {
-      const date = new Date(element.dateTime);
-      if (!Number.isNaN(date.getTime())) {
-        element.textContent = date.toLocaleString('en-IN', {day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit', second:'2-digit'});
-        element.title = date.toISOString();
-      }
-    });
-  }
   function schedule() {
     window.clearTimeout(timer);
     toggle.setAttribute('aria-pressed', String(enabled));
@@ -48,7 +39,6 @@
       const opened = Array.from(current.querySelectorAll('details[open]')).map(element => element.id);
       current.replaceWith(document.importNode(next, true));
       opened.forEach(id => { const element = document.getElementById(id); if (element) element.open = true; });
-      formatTimes();
       status.classList.remove('wm-refresh-error');
       status.textContent = enabled ? 'Updated. Checks again in 10 seconds.' : 'Updated. Auto-refresh is paused.';
     } catch (error) {
@@ -69,6 +59,5 @@
     schedule();
   });
   window.addEventListener('pagehide', () => { window.clearTimeout(timer); if (controller) controller.abort(); mobile.removeEventListener('change', fitMenu); });
-  formatTimes();
   schedule();
 })();

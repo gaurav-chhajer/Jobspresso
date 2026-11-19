@@ -26,7 +26,7 @@ TAXONOMY_VERSION = _TAXONOMY["taxonomy_version"]
 IMPLIES = {source: tuple(targets) for source, targets in _TAXONOMY["implies"].items()}
 BLOCKED_SKILL_PAIRS = frozenset(frozenset(pair) for pair in _TAXONOMY["blocked_pairs"])
 FUZZY_SKILL_THRESHOLD = 0.92
-PARSER_VERSION = "jd-requirements-v25"
+PARSER_VERSION = "jd-requirements-v26"
 
 
 _SECTION_NAMES = {
@@ -225,6 +225,9 @@ _JD_BOILERPLATE = re.compile(
     r"\b(?:sms opt[- ]in|phone numbers? .*\b(?:third parties|affiliates)|"
     r"not shared,? sold,? or rented|data privacy notice|equal opportunity employer|"
     r"duties and responsibilities of this position may evolve|"
+    r"our inclusive culture empowers|"
+    r"if you have a disability and need|"
+    r"workplace accommodation or adjustment during the application|"
     r"by submitting your application, you consent to .* background checks|"
     r"takes your privacy seriously|in accordance with applicable data protection laws|"
     r"for any inquiries related to data privacy|explore more opportunities at\s*:?)\b", re.I)
@@ -538,7 +541,8 @@ def extract_jd_requirements(text, *, job_title=""):
                 continue
             source_line = section["text"].splitlines()[line_offset]
             content = line.strip(" \t-*•")
-            if not content or _JD_BOILERPLATE.search(content) or _QUALIFICATION_INTRO.fullmatch(content):
+            if (not content or content.casefold().strip(' .') in {'null', 'none', 'undefined', 'n/a'}
+                    or _JD_BOILERPLATE.search(content) or _QUALIFICATION_INTRO.fullmatch(content)):
                 continue
             mentions = extract_skill_mentions(content, section_context=clause_section)
             if re.match(r"^(?:(?:you(?:'re| are)?|are)\s+)?(?:excited to (?:explore|learn)|curious about|curiosity about|willingness to learn)\b",

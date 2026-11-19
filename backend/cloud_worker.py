@@ -725,6 +725,14 @@ def register_routes(application, connection, database):
             if cadence not in ("off", "daily", "weekly"):
                 raise ValueError("Invalid cadence")
             due = cadence != "off" if immediate else fixed_schedule_due(conn, user["id"], now)
+            if matches_only and due:
+                last_sent = conn.execute("SELECT MAX(sent_at) FROM sent_log WHERE user_id=? AND channel='email'",
+                                         (user['id'],)).fetchone()[0]
+                if last_sent:
+                    previous = datetime.fromisoformat(last_sent)
+                    if previous.tzinfo is None:
+                        raise ValueError('Saved send timestamp must include a timezone')
+                    due = now - previous >= timedelta(hours=1)
             reminder = immediate and not matches_only and not matches and match_reminders.due(conn, user['id'], now)
             if not due or not (matches or reminder):
                 return {"next": user["id"], "sent": False}

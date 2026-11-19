@@ -1640,3 +1640,30 @@ roles are not presented as confirmed direct-employer vacancies. Existing
 seniority filters remain in effect, including for the senior roles in supplied
 lists. These additions need the same backed-up hosted migration and catalog
 seed/sync before the live worker can fetch them.
+
+
+### Recent funding discovery
+
+The Funded page lists funding announcements published within the last 90 days.
+Jobs supports an optional Recently funded first sort; match scores and eligibility
+filters remain in effect. Announcement publication dates are a proxy for funding
+dates. RSS feeds may expose less than 90 days of history, so coverage is partial.
+Discovery reuses matching registered Greenhouse, Lever and Ashby companies and
+can discover new Greenhouse, Lever and Ashby boards when the board or an ATS
+posting supplies a matching employer name. Non-obvious slugs and boards without
+matching employer metadata may require verified catalog registration. No automatic subscription or scheduled discovery is added.
+
+Before use, back up the database and apply additive migration
+`058_funded_companies.sql` through the existing migration process.
+`python -B -m scripts.run_funding_discovery` reads live feeds/boards and rolls back
+funding changes; `--run` saves them. Both require explicit authorization for network
+access. With --run, the command also fetches and stores jobs from active boards linked
+to funding within the window. The existing matching worker scores eligible jobs
+using its configured company selection. The discovery command does not migrate
+the database, score jobs or send email.
+
+Every discovery run also retries saved unlinked leads within the 90-day
+window, even after their headlines have dropped out of RSS. Use
+`python -B -m scripts.run_funding_discovery --catalog-only --run` to link saved
+leads to unique existing catalog matches without network calls. Omit `--run`
+to preview those links.

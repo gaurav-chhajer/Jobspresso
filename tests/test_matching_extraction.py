@@ -5,6 +5,14 @@ from backend import matching_extraction as extraction
 
 
 class MatchingExtractionTests(unittest.TestCase):
+    def test_hiring_footer_and_null_do_not_become_requirements(self):
+        clause = 'Knowledge of programming languages such as C/C++, Python, Java or Perl'
+        items = extraction.extract_jd_requirements('Basic Qualifications\n' + clause + '\n'
+            'Our inclusive culture empowers Amazonians to deliver the best results for our customers\n'
+            'If you have a disability and need a workplace accommodation or adjustment during the application and hiring process, please visit https://ama\nnull')
+        self.assertEqual([item['text'] for item in items], [clause])
+        self.assertTrue({'Python', 'Java', 'C++'}.issubset(items[0]['skills']))
+
     def test_catalog_boundary_requires_canonical_names_and_source_evidence(self):
         text = 'Technical Skills: You must use Python and AcmeCloud software.'
         result = extraction.validate_skill_candidates(text,

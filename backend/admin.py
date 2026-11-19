@@ -21,6 +21,21 @@ IST = timezone(timedelta(hours=5, minutes=30))
 PAGE_SIZE = 30
 
 
+def admin_time(value):
+    if value is None or value == '':
+        return 'Unavailable'
+    try:
+        if isinstance(value, int):
+            stamp = datetime.fromtimestamp(value, timezone.utc)
+        else:
+            stamp = datetime.fromisoformat(value)
+            if stamp.tzinfo is None:
+                stamp = stamp.replace(tzinfo=timezone.utc)
+        return stamp.astimezone(IST).strftime('%d-%m-%Y at %H:%M:%S IST')
+    except (ValueError, OverflowError, OSError):
+        return 'Invalid timestamp'
+
+
 def audit(conn, actor_id, action, target_type, target_id, now, detail='completed'):
     """Store IDs and fixed operational detail, never email, resume or tokens."""
     conn.execute('''INSERT INTO admin_audit_log(actor_id,action,target_type,target_id,detail,created_at)
@@ -102,6 +117,7 @@ def overview(conn, now):
 
 def register_routes(app, connection, context, now, database, uploads):
     routes = Blueprint('admin', __name__)
+    routes.add_app_template_filter(admin_time, 'admin_time')
 
     @routes.before_request
     def authorize():
@@ -228,7 +244,7 @@ def register_routes(app, connection, context, now, database, uploads):
             section('Discovery outcomes', ('Platform','Status','Searches','Verified','Rejected','Saved'), 'SELECT platform,status,COUNT(*),SUM(verified),SUM(rejected),SUM(saved) FROM tavily_searches GROUP BY platform,status')
             section('Worker heartbeats', ('User ID','Worker','State','Code','Updated'), 'SELECT user_id,worker,state,code,updated_at FROM worker_pulses ORDER BY updated_at DESC')
         elif page == 'audit':
-            section('Admin actions', ('At (UTC)','Actor ID','Action','Target type','Target ID','Result'),
+            section('Admin actions', ('At (IST)','Actor ID','Action','Target type','Target ID','Result'),
                 'SELECT created_at,actor_id,action,target_type,target_id,detail FROM admin_audit_log ORDER BY id DESC', paged=True)
         elif page == 'system':
             version = conn.execute('SELECT name FROM schema_migrations ORDER BY name DESC LIMIT 1').fetchone()

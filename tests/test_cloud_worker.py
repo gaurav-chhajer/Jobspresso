@@ -442,6 +442,7 @@ class CloudEndpointTests(unittest.TestCase):
                 patch.object(pipeline, "validate_email_configuration"), \
                 patch.object(pipeline, "deliver_email") as mail:
             clock.now.return_value = NOW
+            clock.fromisoformat.side_effect = datetime.fromisoformat
             self.assertFalse(self.call("email/matches", {"after": 0}).json["sent"])
             reminder_due.assert_not_called()
             self.conn.execute("UPDATE scores SET is_stale=0")

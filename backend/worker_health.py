@@ -26,7 +26,16 @@ def observations(conn, now):
     result = {}
     for row in conn.execute('SELECT * FROM worker_health'):
         item = dict(row)
-        item['display_state'] = ('Stale' if now - datetime.fromisoformat(item['updated_at']) > timedelta(minutes=15)
+        item['display_state'] = ('Stale' if (not item['company_id'] or item['state'] == 'running')
+                                 and now - datetime.fromisoformat(item['updated_at']) > timedelta(minutes=15)
                                  else item['state'].title())
         result[(item['worker'], item['company_id'])] = item
+    fetch = result.get(('fetch', 0))
+    if fetch and fetch['state'] == 'running':
+        activity = max((item['updated_at'] for (worker, company), item in result.items()
+                        if worker == 'fetch' and company != 0), default=fetch['updated_at'])
+        if activity > fetch['updated_at']:
+            fetch['updated_at'] = activity
+            fetch['display_state'] = ('Stale' if now - datetime.fromisoformat(activity) > timedelta(minutes=15)
+                                      else 'Running')
     return result

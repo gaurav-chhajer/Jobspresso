@@ -16,6 +16,23 @@ from tests import test_cloud_worker, test_evaluation
 
 
 class ScoringRecoveryTests(unittest.TestCase):
+    def test_email_checks_wait_one_hour_while_scoring_continues(self):
+        stop, ready = threading.Event(), MagicMock()
+        batches = []
+        def score(*args, **kwargs):
+            batches.append(1)
+            if len(batches) == 3:
+                stop.set()
+            return 0
+        state = {'paused': False}
+        with patch.object(runner, 'score_pending', side_effect=score), \
+                patch.object(runner, 'send_emails', return_value=0) as email, \
+                patch.object(watch_hosted_jobs.time, 'monotonic', return_value=100):
+            self.assertEqual(watch_hosted_jobs._score_loop('client', stop, ready, state), 0)
+        email.assert_called_once()
+        self.assertEqual(state['next_check'], 3700)
+        self.assertEqual(len(batches), 3)
+
     def setUp(self):
         telemetry = patch.object(runner, 'report_health')
         telemetry.start()
@@ -211,7 +228,8 @@ class QueuedWorkerTests(unittest.TestCase):
                 stop = MagicMock()
                 stop.is_set.return_value = False
                 stop.wait.return_value = True
-                with patch.object(runner, '_fetch_and_score', return_value=0) as fetch, \
+                with patch.object(watch_hosted_jobs, 'load_fetch_cursor', return_value=None), \
+                        patch.object(runner, '_fetch_and_score', return_value=0) as fetch, \
                         patch.object(watch_hosted_jobs.time, 'monotonic', side_effect=[100, 100 + duration]):
                     self.assertEqual(watch_hosted_jobs._fetch_loop('client', stop), 0)
                 fetch.assert_called_once()
