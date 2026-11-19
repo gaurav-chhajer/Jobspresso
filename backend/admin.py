@@ -128,6 +128,8 @@ def register_routes(app, connection, context, now, database, uploads):
         data = dict(context(), admin_page=page, admin_pages=PAGES, admin_title=dict(PAGES)[page],
                     admin_number=number, admin_query=query, admin_more=False, sections=[], kpis=[],
                     source_options=tuple(career_sources.SOURCES))
+        from backend.worker_health import observations
+        data["worker_health"] = observations(conn, stamp)
         offset = (number - 1) * PAGE_SIZE
 
         def section(title, columns, sql, params=(), paged=False):

@@ -31,6 +31,9 @@ def title_profile(titles=None):
 
 class CloudEndpointTests(unittest.TestCase):
     def setUp(self):
+        telemetry = patch.object(runner, "report_health")
+        telemetry.start()
+        self.addCleanup(telemetry.stop)
         test_web_flows.WebFlowTests.setUp(self)
         test_web_flows.WebFlowTests.seed_user(self)
         self.conn.execute("UPDATE scores SET is_stale=1")
@@ -750,7 +753,25 @@ class CloudEndpointTests(unittest.TestCase):
 
 
 class CloudRunnerTests(unittest.TestCase):
+    def test_large_complete_feed_uses_additive_batches(self):
+        company = dict(id=1, name='Synthetic', ats_type='lever', board_slug='synthetic', fingerprint='0' * 64)
+        jobs = [dict(external_id=str(i), title='Engineer', raw_json={}) for i in range(3)]
+        client = MagicMock()
+        client.call.side_effect = lambda route, data=None: ({'companies': [company]} if route == 'companies' else {'saved': len(data['jobs'])})
+        with patch.object(pipeline, 'fetch_jobs_for_company', return_value=jobs), \
+                patch.object(runner, 'MAX_JOBS', 2), \
+                patch.object(runner, 'configured_tavily_keys', return_value=()), \
+                patch.object(runner.time, 'monotonic', return_value=0):
+            self.assertEqual(runner.fetch_and_score(client, 420, fetch_only=True), 0)
+        writes = [call for call in client.call.call_args_list if call.args[0] != 'companies']
+        self.assertEqual([call.args[0] for call in writes], ['observations', 'observations'])
+        self.assertEqual([len(call.args[1]['jobs']) for call in writes], [2, 1])
+        self.assertTrue(all(call.args[1]['mode'] == 'observed' for call in writes))
+
     def setUp(self):
+        telemetry = patch.object(runner, 'report_health')
+        telemetry.start()
+        self.addCleanup(telemetry.stop)
         # Legacy runner cases isolate board/scoring behavior; history is covered separately.
         reporter = patch.object(runner.GroqKeyPool, 'publish', autospec=True)
         reporter.start()
@@ -1147,6 +1168,11 @@ class CloudRunnerTests(unittest.TestCase):
 
 
 class LocalHostedWatcherTests(unittest.TestCase):
+    def setUp(self):
+        telemetry = patch.object(runner, 'report_health')
+        telemetry.start()
+        self.addCleanup(telemetry.stop)
+
     def test_preview_makes_no_external_calls(self):
         with patch.object(watcher, 'run_cycle') as cycle, patch.object(runner, 'HostedClient') as client:
             self.assertEqual(watcher.main([]), 0)

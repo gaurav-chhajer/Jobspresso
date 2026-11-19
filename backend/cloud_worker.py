@@ -162,6 +162,12 @@ def register_routes(application, connection, database):
             raise ValueError("Too many companies for one daily cycle")
         return {"companies": [dict(row, fingerprint=fingerprint(dict(row))) for row in rows]}
 
+    @routes.post('/health')
+    def health():
+        from backend import worker_health
+        worker_health.save(connection(), body())
+        return {'saved': True}
+
     @routes.post('/sync-catalog')
     def sync_catalog():
         from backend.career_sources import SOURCES, UNVERIFIED_SOURCES, VERIFIED_WORLDWIDE_SOURCES

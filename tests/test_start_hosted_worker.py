@@ -16,6 +16,11 @@ from tests import test_cloud_worker, test_evaluation
 
 
 class ScoringRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        telemetry = patch.object(runner, 'report_health')
+        telemetry.start()
+        self.addCleanup(telemetry.stop)
+
     def test_provider_cooldown_wait_is_interruptible_and_does_not_send_email(self):
         stop, ready = MagicMock(), MagicMock()
         stop.is_set.return_value = False
@@ -81,6 +86,11 @@ class ScoringRecoveryTests(unittest.TestCase):
 
 
 class StartupWorkerTests(unittest.TestCase):
+    def setUp(self):
+        telemetry = patch.object(runner, 'report_health')
+        telemetry.start()
+        self.addCleanup(telemetry.stop)
+
     def test_loads_environment_before_full_worker_and_preserves_exit_status(self):
         for status in (0, 1, 130):
             with self.subTest(status=status), tempfile.TemporaryDirectory(dir=Path(__file__).parent) as folder:
@@ -158,6 +168,11 @@ class StartupWorkerTests(unittest.TestCase):
 
 
 class QueuedWorkerTests(unittest.TestCase):
+    def setUp(self):
+        telemetry = patch.object(runner, 'report_health')
+        telemetry.start()
+        self.addCleanup(telemetry.stop)
+
     def test_fetch_cursor_is_atomic_state_and_validates_saved_value(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / 'hosted_fetch_cursor.json'
@@ -476,6 +491,11 @@ class QueuedWorkerTests(unittest.TestCase):
 
 
 class QueuedScoringTests(unittest.TestCase):
+    def setUp(self):
+        telemetry = patch.object(runner, 'report_health')
+        telemetry.start()
+        self.addCleanup(telemetry.stop)
+
     def item(self, job_id=1):
         return dict(user=dict(id=1, resume_text='Synthetic Python resume'),
                     job=dict(id=job_id, company_id=1, raw_json='{}'),
@@ -651,6 +671,9 @@ class QueuedScoringTests(unittest.TestCase):
 
 class DurableQueueTests(unittest.TestCase):
     def setUp(self):
+        telemetry = patch.object(runner, 'report_health')
+        telemetry.start()
+        self.addCleanup(telemetry.stop)
         test_cloud_worker.CloudEndpointTests.setUp(self)
 
     def call(self, route, data=None):

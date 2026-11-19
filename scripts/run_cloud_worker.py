@@ -328,6 +328,15 @@ def fetch_and_score(client, deadline, fetch_only=False, *, provider="groq"):
             pool.publish("complete" if result == 0 else "deferred")
 
 
+def report_health(client, worker, state, company_id=0, job_count=0, error_code=''):
+    """Telemetry failure is visible but must not replay or block job operations."""
+    try:
+        client.call('health', dict(worker=worker, state=state, company_id=company_id,
+                                  job_count=job_count, error_code=error_code))
+    except (requests.RequestException, RuntimeError, ValueError) as error:
+        logger.warning('Worker telemetry unavailable: worker=%s error=%s', worker, type(error).__name__)
+
+
 def _download_company(company, deadline, stop):
     if stop is not None and stop.is_set() or time.monotonic() >= deadline - 120:
         raise RuntimeError('Fetch cancelled or time budget exhausted')
@@ -381,6 +390,7 @@ def _fetch_and_score(client, deadline, fetch_only, pool, stop=None, *, allow_par
         raise ValueError("Fetch cursor must be a positive company ID")
     if progress_callback is not None and not callable(progress_callback):
         raise ValueError("Fetch progress callback must be callable")
+    report_health(client, "fetch", "running")
     companies = client.call("companies").get("companies")
     if not isinstance(companies, list) or len(companies) > MAX_COMPANIES:
         raise ValueError("Invalid company list")
@@ -422,6 +432,7 @@ def _fetch_and_score(client, deadline, fetch_only, pool, stop=None, *, allow_par
                                  for character in company["board_slug"])
                              or company['ats_type'] == 'ashby' and company['board_slug'] == 'mecka.ai')):
                     raise ValueError("Invalid board configuration")
+                report_health(client, "fetch", "running", company["id"])
                 stage = "fetch"
                 source = company.get('career_source')
                 if source is not None and source not in career_sources.SOURCES:
@@ -431,12 +442,26 @@ def _fetch_and_score(client, deadline, fetch_only, pool, stop=None, *, allow_par
                 mode = mode_for_source(source)
                 jobs = deduplicate(jobs, mode)
                 envelope = dict(company_id=company['id'], fingerprint=company['fingerprint'], mode=mode)
+                # A large complete feed cannot be split into closing snapshots:
+                # each part would close jobs from the other parts. Transfer it
+                # additively instead, retaining unseen jobs for a later full read.
+                oversized = (mode == 'snapshot' and
+                             (len(jobs) > MAX_JOBS or len(json.dumps(
+                                 dict(envelope, jobs=jobs), allow_nan=False).encode()) > MAX_BODY_BYTES))
+                endpoint = 'snapshot'
+                if oversized:
+                    mode = 'observed'
+                    envelope['mode'] = mode
+                    endpoint = 'observations'
+                    logger.warning('Large feed transferred additively: company_id=%s jobs=%s; unseen jobs retained',
+                                   company['id'], len(jobs))
                 batches = (observation_batches(envelope, jobs, MAX_JOBS, MAX_BODY_BYTES)
                            if mode == 'observed' else [dict(envelope, jobs=jobs)])
                 for batch in batches:
                     if time.monotonic() >= deadline:
                         raise ValueError('Observation transfer time budget exhausted')
-                    client.call('snapshot', batch)
+                    client.call(endpoint, batch)
+                report_health(client, "fetch", "success", company["id"], len(jobs))
                 successful.add(company["id"])
                 logger.info("Fetched company_id=%s jobs=%s", company["id"], len(jobs))
             except (requests.RequestException, ValueError, KeyError, TypeError, RuntimeError) as error:
@@ -444,13 +469,16 @@ def _fetch_and_score(client, deadline, fetch_only, pool, stop=None, *, allow_par
                 company_id = company.get("id") if isinstance(company, dict) else None
                 logger.error("Board operation failed: company_id=%s stage=%s error=%s http_status=%s; previous jobs retained if snapshot was not accepted",
                              company_id if type(company_id) is int else "invalid", stage, type(error).__name__,
-                             response.status_code if response is not None else "unavailable")
+                             response.status_code if response is not None else
+                             error.status if isinstance(error, HostedOperationError) else "unavailable")
+                report_health(client, "fetch", "failed", company_id, error_code="source_error" if stage == "fetch" else "transfer_error")
                 failed = True
             if (progress_callback is not None and isinstance(company, dict) and
                     type(company.get("id")) is int and company["id"] > 0):
                 progress_callback(company["id"])
     if not budget_exhausted and (stop is None or not stop.is_set()) and progress_callback is not None:
         progress_callback(None)
+    report_health(client, "fetch", "failed" if failed else "idle", job_count=len(successful), error_code="worker_error" if failed else "")
     logger.info("Fetch summary: boards_succeeded=%s boards_total=%s partial_failure=%s",
                 len(successful), len(companies), failed)
     if budget_exhausted and not successful:

@@ -136,6 +136,7 @@ def _score_loop(client, stop, ready, email_state=None, quota=None, scorer=None):
     quota = quota if quota is not None else QuotaState()
     while not stop.is_set():
         ready.clear()
+        worker.report_health(client, "score", "running")
         logger.info("Queue scoring batch started; fetching runs independently.")
         try:
             deadline = time.monotonic() + worker.MATCHING_SECONDS
@@ -148,6 +149,7 @@ def _score_loop(client, stop, ready, email_state=None, quota=None, scorer=None):
             if stop.wait(error.seconds):
                 break
             continue
+        worker.report_health(client, "score", "failed" if status else "idle", error_code="worker_error" if status else "")
         if status or stop.is_set():
             if status and not stop.is_set():
                 logger.error("Scoring loop stopped; pending jobs remain queued. Review logs before restarting.")
