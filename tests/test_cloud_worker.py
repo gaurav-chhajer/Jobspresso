@@ -1189,6 +1189,7 @@ class CloudRunnerTests(unittest.TestCase):
             response.status_code = 200
             response.iter_content.return_value = [b'{"next":null}']
             self.assertEqual(client.call("email", {"after": 0}), {"next": None})
+            session.return_value.cookies.clear.assert_called_once_with()
             self.assertFalse(session.return_value.request.call_args.kwargs["allow_redirects"])
             response.status_code = 302
             with self.assertRaises(runner.HostedOperationError) as error:

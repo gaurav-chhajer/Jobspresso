@@ -242,6 +242,13 @@ class CareerSourceTests(unittest.TestCase):
         self.assertNotIn('descriptionHtml', jobs[0]['raw_json'])
         self.assertEqual(jobs[0]['raw_json']['career_source'], 'hotstar')
 
+    def test_salesforce_rechecks_missing_listings_at_same_offset(self):
+        with patch.object(sources.Feed, 'json', side_effect=[{}, dict(total=0, jobPostings=[])]) as request:
+            self.assertEqual(sources.fetch('salesforce'), [])
+        self.assertEqual(request.call_args_list[0], request.call_args_list[1])
+        with patch.object(sources.Feed, 'json', side_effect=[{}, {}]), self.assertRaises(KeyError):
+            sources.fetch('salesforce')
+
     def test_complete_empty_and_incomplete_duplicate_changed_count(self):
         item = dict(title='Analyst', externalPath='/job/India/A_1', locationsText='India')
         for pages in ([dict(total=2, jobPostings=[item]), dict(total=2, jobPostings=[])],

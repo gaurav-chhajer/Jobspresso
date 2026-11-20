@@ -17,6 +17,16 @@ from scripts import seed_companies as importer
 
 
 class CompanySeedTests(unittest.TestCase):
+    def test_clari_migration_preserves_company_identity(self):
+        with closing(sqlite3.connect(':memory:')) as conn:
+            conn.executescript(SCHEMA)
+            conn.execute("INSERT INTO companies(id,name,ats_type,board_slug) VALUES(13,'Clari','lever','clari')")
+            conn.commit()
+            apply_migrations(conn)
+            self.assertEqual(conn.execute(
+                "SELECT id,ats_type,board_slug FROM companies WHERE name='Clari'"
+            ).fetchall(), [(13, 'greenhouse', 'salesloft')])
+
     def test_missing_board_import_adds_thirty_without_replacing_existing_identity(self):
         with closing(sqlite3.connect(':memory:')) as conn:
             conn.executescript(SCHEMA)
@@ -159,7 +169,7 @@ class CompanySeedTests(unittest.TestCase):
                 self.assertEqual(saved.execute('SELECT name FROM companies').fetchall(), [('Original',)])
                 self.assertNotIn('career_source', [row[1] for row in saved.execute('PRAGMA table_info(companies)')])
                 self.assertEqual(current.execute("SELECT id,name FROM companies WHERE board_slug='original'").fetchall(), [(1, 'Original')])
-                self.assertEqual(current.execute('SELECT COUNT(*) FROM schema_migrations').fetchone()[0], 62)
+                self.assertEqual(current.execute('SELECT COUNT(*) FROM schema_migrations').fetchone()[0], 63)
 
     def test_source_extension_preserves_existing_source_and_constraints(self):
         import hashlib

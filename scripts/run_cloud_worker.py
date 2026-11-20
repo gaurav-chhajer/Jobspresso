@@ -265,6 +265,8 @@ class HostedClient:
         encoded = None if data is None else json.dumps(data, allow_nan=False).encode()
         if encoded is not None and len(encoded) > MAX_BODY_BYTES:
             raise ValueError("Hosted request exceeds transfer limit")
+        # Worker endpoints reject cookies, including any set by the hosting proxy.
+        self.session.cookies.clear()
         with self.session.request("GET" if data is None else "POST",
                                   self.origin + "/internal/worker/" + path,
                                   data=encoded,

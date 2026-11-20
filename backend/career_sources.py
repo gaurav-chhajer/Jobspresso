@@ -736,8 +736,13 @@ def _listings(feed, rows=None):
         feed.progress.update(page=page_number + 1, expected=expected, advertised=None, batch_rows=None)
         if kind == 'workday':
             tenant, site = WORKDAY[key]
-            payload = feed.json(f'/wday/cxs/{tenant}/{site}/jobs',
-                                data=dict(appliedFacets={}, limit=20, offset=len(rows), searchText=''))
+            path = f'/wday/cxs/{tenant}/{site}/jobs'
+            query = dict(appliedFacets={}, limit=20, offset=len(rows), searchText='')
+            payload = feed.json(path, data=query)
+            if key == 'salesforce' and isinstance(payload, dict) and 'jobPostings' not in payload:
+                # Workday intermittently omits the listings. Re-read the same
+                # search page once before advancing or accepting any rows.
+                payload = feed.json(path, data=query)
             count, items = total(payload['total']), payload['jobPostings']
             feed.progress['advertised'] = count
             # Workday computes total only at offset zero. Subsequent pages
