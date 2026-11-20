@@ -1025,7 +1025,7 @@ def prepare_job(job_row, deadline=None):
                 raise GoogleJobUnavailable('Google posting is no longer available')
             if len(descriptions) != 1:
                 raise CareerDescriptionIncomplete('Google selected description is missing or ambiguous')
-            title = unescape(page_title[1]).removesuffix(' â€” Google Careers')
+            title = unescape(page_title[1]).removesuffix(' — Google Careers')
             location, description = result.get('location'), descriptions[0]
             validate_google_description(description)
             employment = raw.get('employmentType')

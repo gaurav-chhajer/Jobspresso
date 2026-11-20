@@ -127,7 +127,7 @@ class CareerSourceTests(unittest.TestCase):
     def test_google_complete_selected_description_keeps_identity_and_sections(self):
         candidate = self.google_candidate()
         description = '<div class="DkhPwc"><h3>Minimum qualifications:</h3><ul><li>Python experience</li></ul><h3>About the job</h3><p>Build services</p><h3>Responsibilities</h3><p>Deliver services</p></div>'
-        page = '<title>Software Engineer â€” Google Careers</title><link rel="canonical" href="' + candidate['url'] + '">' + description
+        page = '<title>Software Engineer — Google Careers</title><link rel="canonical" href="' + candidate['url'] + '">' + description
         with patch.object(sources.Feed, 'request', return_value=page):
             result = sources.prepare_job(candidate)
         self.assertEqual(json.loads(result['raw_json'])['descriptionHtml'], description)
