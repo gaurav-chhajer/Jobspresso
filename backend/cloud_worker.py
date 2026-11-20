@@ -46,8 +46,19 @@ def authenticate():
     """Separate bearer authentication; browser sessions cannot authorize work."""
     key = worker_key()
     supplied = request.headers.get("Authorization", "")
-    return bool(key and not request.headers.get("Cookie") and
-                hmac.compare_digest(supplied.encode(), ("Bearer " + key).encode()))
+    if not key:
+        reason = "key_unconfigured"
+    elif request.headers.get("Cookie"):
+        reason = "cookie_present"
+    elif not supplied:
+        reason = "authorization_missing"
+    elif not hmac.compare_digest(supplied.encode(), ("Bearer " + key).encode()):
+        reason = "authorization_mismatch"
+    else:
+        return True
+    current_app.logger.warning("Worker authentication rejected: reason=%s endpoint=%s",
+                               reason, request.endpoint)
+    return False
 
 
 def fingerprint(value):

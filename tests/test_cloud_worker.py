@@ -161,6 +161,27 @@ class CloudEndpointTests(unittest.TestCase):
         return dict(user_id=item["user"]["id"], job_id=item["job"]["id"],
                     fingerprint=item["fingerprint"], result=test_evaluation.sample_result())
 
+    def test_authentication_logs_reason_without_credential(self):
+        cases = [
+            ({}, "authorization_missing"),
+            ({"Authorization": "Bearer wrong"}, "authorization_mismatch"),
+        ]
+        for headers, reason in cases:
+            with self.subTest(reason=reason), self.assertLogs(self.app.logger, level="WARNING") as logs:
+                response = self.client.get("/internal/worker/work", headers=headers)
+            self.assertEqual(response.status_code, 401)
+            self.assertIn("reason=" + reason, logs.output[0])
+            self.assertNotIn(KEY, logs.output[0])
+            self.assertNotIn("private", logs.output[0])
+        self.client.set_cookie("synthetic", "private")
+        with self.assertLogs(self.app.logger, level="WARNING") as logs:
+            response = self.client.get("/internal/worker/work", headers=HEADERS)
+        self.assertEqual(response.status_code, 401)
+        self.assertIn("reason=cookie_present", logs.output[0])
+        self.assertNotIn(KEY, logs.output[0])
+        self.assertNotIn("private", logs.output[0])
+        self.client.delete_cookie("synthetic")
+
     def test_requires_separate_auth_and_keeps_browser_csrf(self):
         for headers in ({}, {"Authorization": "Bearer wrong"}):
             self.assertEqual(self.client.get("/internal/worker/work", headers=headers).status_code, 401)
