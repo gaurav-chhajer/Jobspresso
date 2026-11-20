@@ -219,6 +219,10 @@ def run(conn, now=None, fetch=fetch_feed, resolve=None, feeds=FEEDS, *, budget_s
     now = now or datetime.now(timezone.utc)
     deadline = time.monotonic() + budget_seconds
     resolve = resolve or (lambda name: resolve_board(name, deadline))
+    return ingest(conn, collect_feeds(feeds, fetch, deadline, require_feed), resolve, now)
+
+
+def collect_feeds(feeds, fetch, deadline, require_feed):
     entries = []
     feeds_read = 0
     for url in feeds:
@@ -229,4 +233,4 @@ def run(conn, now=None, fetch=fetch_feed, resolve=None, feeds=FEEDS, *, budget_s
             logger.warning('Funding feed skipped: host=%s error=%s', urlsplit(url).hostname, type(error).__name__)
     if require_feed and not feeds_read:
         raise RuntimeError('No funding feeds could be read')
-    return ingest(conn, entries, resolve, now)
+    return entries

@@ -6,7 +6,8 @@ on:
     - cron: '30 2,14 * * *'
   workflow_dispatch:
 
-permissions: {}
+permissions:
+  contents: read
 
 concurrency:
   group: studentconnect-daily-automation
@@ -15,8 +16,15 @@ concurrency:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 8
     steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt
       - name: Refresh funding leads and verify career boards
         env:
           WORKER_KEY: ${{ secrets.STUDENTCONNECT_WORKER_KEY }}
@@ -25,7 +33,34 @@ jobs:
             echo "::error::Configure STUDENTCONNECT_WORKER_KEY in Actions secrets"
             exit 1
           fi
-          curl --fail --silent --show-error --connect-timeout 10 --max-time 90 \
-            --header "Authorization: Bearer $WORKER_KEY" \
-            --header 'Content-Type: application/json' --data '{}' \
-            https://gauravchhajer.pythonanywhere.com/internal/worker/funding-refresh
+          python -B - <<'PY'
+          from datetime import datetime, timedelta, timezone
+          import os
+          import time
+
+          import requests
+
+          from backend import funding_discovery as funding
+
+          now = datetime.now(timezone.utc)
+          entries = funding.collect_feeds(funding.FEEDS, funding.fetch_feed, time.monotonic() + 60, True)
+          deadline = time.monotonic() + funding.TIME_BUDGET_SECONDS
+          payload, boards = [], {}
+          for entry in sorted(entries, key=lambda item: item['published'], reverse=True):
+              name = funding.company_name(entry['title'])
+              if not name or not now - timedelta(days=funding.RECENT_DAYS) <= entry['published'] <= now:
+                  continue
+              key = funding.key_of(name)
+              if key not in boards and len(boards) < funding.MAX_PROBES and time.monotonic() < deadline:
+                  boards[key] = funding.resolve_board(name, deadline)
+              payload.append(dict(entry, published=entry['published'].isoformat(), board=boards.get(key)))
+
+          response = requests.post(
+              'https://gauravchhajer.pythonanywhere.com/internal/worker/funding-refresh',
+              headers={'Authorization': 'Bearer ' + os.environ['WORKER_KEY']},
+              json={'entries': payload}, allow_redirects=False, timeout=(10, 90),
+          )
+          if response.status_code != 200:
+              raise SystemExit(f'Funding refresh returned HTTP {response.status_code}')
+          print(response.json())
+          PY

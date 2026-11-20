@@ -172,11 +172,36 @@ def register_routes(application, connection, database):
     def funding_refresh():
         from backend import funding_discovery
 
-        if body() != {}:
-            raise ValueError('Funding refresh accepts no parameters')
+        payload = body()
+        rows = payload.get('entries')
+        if set(payload) != {'entries'} or not isinstance(rows, list) or len(rows) > 600:
+            raise ValueError('Invalid funding entries')
+        entries, boards = [], {}
+        for row in rows:
+            if not isinstance(row, dict) or set(row) != {'title', 'link', 'published', 'board'}:
+                raise ValueError('Invalid funding entry')
+            title, link, date, board = (row[key] for key in ('title', 'link', 'published', 'board'))
+            if (not isinstance(title, str) or not 1 <= len(title) <= 300
+                    or not isinstance(link, str) or len(link) > 2000 or not funding_discovery.allowed_host(link)
+                    or not isinstance(date, str) or len(date) > 40):
+                raise ValueError('Invalid funding entry metadata')
+            published = datetime.fromisoformat(date)
+            if published.tzinfo is None:
+                raise ValueError('Funding timestamp requires a timezone')
+            name = funding_discovery.company_name(title)
+            if not name:
+                raise ValueError('Missing funding company')
+            if board is not None:
+                if (not isinstance(board, list) or len(board) != 2
+                        or board[0] not in ('greenhouse', 'lever', 'ashby')
+                        or board[1] not in funding_discovery.slug_variants(name)):
+                    raise ValueError('Invalid verified funding board')
+                boards[funding_discovery.key_of(name)] = tuple(board)
+            entries.append(dict(title=title, link=link, published=published))
         conn = connection()
         with run_pipeline.exclusive_cycle(Path(database).parent / 'pipeline.lock'), conn:
-            return funding_discovery.run(conn, budget_seconds=30, require_feed=True)
+            return funding_discovery.ingest(conn, entries, lambda name: boards.get(funding_discovery.key_of(name)),
+                                            datetime.now(timezone.utc))
 
     @routes.post('/sync-catalog')
     def sync_catalog():
