@@ -387,13 +387,17 @@ def register_routes(application, connection, database):
             return payload
 
         profile = role_titles.current(conn, user)
-        candidates = pipeline.filter_candidate_jobs(conn, role_titles.filtering_user(user, profile))
         if company_values:
+            candidates = pipeline.filter_candidate_jobs(conn, role_titles.filtering_user(user, profile))
             # Failed boards must not consume the bounded batch's candidate slots.
             yc_selected = conn.execute("SELECT 1 FROM companies WHERE career_source='yc' AND id IN (" +
                                        ','.join('?' for _ in company_ids) + ')', tuple(company_ids)).fetchone()
             candidates = [job for job in candidates if job["company_id"] in company_ids or
                           yc_selected and json.loads(job['raw_json'] or '{}').get('career_source') == 'yc']
+            if profile is not None:
+                candidates = role_titles.select(candidates, profile)[:MAX_WORK_ITEMS]
+        else:
+            candidates = pipeline.matching_work_batch(conn, user, profile, MAX_WORK_ITEMS if profile else 1)
         if not candidates and (profile is not None or conn.execute(
                 'SELECT 1 FROM user_settings WHERE user_id=? AND subscriptions_configured=1', (user['id'],)).fetchone()):
             return empty_work()
@@ -403,7 +407,7 @@ def register_routes(application, connection, database):
             return {"items": [], "next": user["id"], "role_profile_required": {
                 "user": required_user, "fingerprint": fingerprint(dict(user)),
                 "version": role_titles.VERSION, "model": pipeline.GROQ_MODEL}}
-        for job in role_titles.select(candidates, profile)[:MAX_WORK_ITEMS]:
+        for job in candidates:
             company = conn.execute("SELECT name FROM companies WHERE id=?", (job["company_id"],)).fetchone()
             items.append(dict(user=dict(user), job=dict(job), company_name=company[0],
                               fingerprint=fingerprint(work_identity(user, job))))
@@ -429,8 +433,7 @@ def register_routes(application, connection, database):
             if user is None or task is None or task['revision'] != revision or data.get('fingerprint') != fingerprint(dict(user)):
                 return {'completed': False}
             profile = role_titles.current(conn, user)
-            candidates = pipeline.filter_candidate_jobs(conn, role_titles.filtering_user(user, profile))
-            if (profile is None and candidates) or (profile is not None and role_titles.select(candidates, profile)):
+            if pipeline.matching_work_batch(conn, user, profile, 1):
                 return {'completed': False}
             conn.execute("UPDATE matching_tasks SET status='complete',last_error=NULL,updated_at=? WHERE user_id=? AND revision=?",
                          (datetime.now(timezone.utc).isoformat(), uid, revision))
@@ -619,7 +622,7 @@ def register_routes(application, connection, database):
                 validate_evaluation(result, user["resume_text"], pipeline.extract_job_description(job))
             task = conn.execute("SELECT revision FROM matching_tasks WHERE user_id=?", (user_id,)).fetchone()
             pipeline.store_score(conn, job_id, user_id, result)
-            if task and not pipeline.filter_candidate_jobs(conn, filtering_user):
+            if task and not pipeline.matching_work_batch(conn, user, profile, 1):
                 conn.execute("""UPDATE matching_tasks SET status='complete',last_error=NULL
                     WHERE user_id=? AND revision=?""", (user_id, task[0]))
         return {"saved": True}
@@ -724,7 +727,7 @@ def register_routes(application, connection, database):
                 if profile is None or role_titles.match_index(title, profile) is None:
                     return {'eligible': False, 'job': prepared, 'fingerprint': fingerprint(work_identity(user, prepared))}
                 filtering_user = role_titles.filtering_user(user, profile)
-            eligible = any(candidate['id'] == job_id for candidate in pipeline.filter_candidate_jobs(conn, filtering_user))
+            eligible = pipeline.eligible_unscored_job(conn, filtering_user, job_id)
             return {'eligible': eligible, 'job': prepared, 'fingerprint': fingerprint(work_identity(user, prepared))}
 
     @routes.post("/email")

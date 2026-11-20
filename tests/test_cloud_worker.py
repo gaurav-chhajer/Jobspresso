@@ -370,6 +370,20 @@ class CloudEndpointTests(unittest.TestCase):
         oversized = 'work?' + '&'.join(['company_id=1'] * (cloud_worker.MAX_COMPANIES + 1))
         self.assertEqual(self.call(oversized).status_code, 400)
 
+    def test_queued_job_selection_preserves_eligibility_and_title_priority(self):
+        user = self.conn.execute("SELECT * FROM users WHERE id=1").fetchone()
+        profile = role_titles.current(self.conn, user)
+        filtering_user = role_titles.filtering_user(user, profile)
+        original = pipeline.filter_candidate_jobs(self.conn, filtering_user)
+        expected = [row['id'] for row in role_titles.select(original, profile)]
+        self.assertTrue(expected)
+        for limit in (1, cloud_worker.MAX_WORK_ITEMS):
+            actual = pipeline.matching_work_batch(self.conn, user, profile, limit)
+            self.assertEqual([row['id'] for row in actual], expected[:limit])
+        self.assertTrue(pipeline.eligible_unscored_job(self.conn, filtering_user, expected[0]))
+        self.conn.execute("UPDATE jobs SET is_active=0 WHERE id=?", (expected[0],))
+        self.assertFalse(pipeline.eligible_unscored_job(self.conn, filtering_user, expected[0]))
+
     def test_score_rejects_unsubscribed_and_changed_posting(self):
         item = self.item()
         self.conn.execute("UPDATE jobs SET raw_json='{}' WHERE id=?", (item["job"]["id"],))
@@ -788,6 +802,17 @@ class CloudEndpointTests(unittest.TestCase):
 
 
 class CloudRunnerTests(unittest.TestCase):
+    def test_score_save_requires_explicit_write_acknowledgement(self):
+        client = MagicMock()
+        item = dict(user=dict(id=1), job=dict(id=2), fingerprint='0' * 64)
+        client.call.return_value = dict(saved=False, already_scored=True)
+        self.assertFalse(runner.save_score_result(client, item, {}))
+        client.call.return_value = dict(saved=True)
+        self.assertTrue(runner.save_score_result(client, item, {}))
+        client.call.return_value = {}
+        with self.assertRaises(ValueError):
+            runner.save_score_result(client, item, {})
+
     def test_large_complete_feed_uses_additive_batches(self):
         company = dict(id=1, name='Synthetic', ats_type='lever', board_slug='synthetic', fingerprint='0' * 64)
         jobs = [dict(external_id=str(i), title='Engineer', raw_json={}) for i in range(3)]
