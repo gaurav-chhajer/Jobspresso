@@ -52,7 +52,7 @@ SOURCES = {
     'slack': ('Slack', 'workday', 'https://salesforce.wd12.myworkdayjobs.com'),
     'airbnb': ('Airbnb', 'greenhouse', 'https://boards-api.greenhouse.io'),
     'notion': ('Notion', 'ashby', 'https://api.ashbyhq.com'),
-    'zoom': ('Zoom', 'blocked', 'https://careers.zoom.us'),
+    'zoom': ('Zoom', 'workday', 'https://zoom.wd5.myworkdayjobs.com'),
     # Sources discovered through the PDF career pages. Blocked entries await
     # verification of their feed identity and listing/detail behavior.
     'supabase': ('Supabase', 'ashby', 'https://api.ashbyhq.com'),
@@ -80,7 +80,7 @@ SOURCES = {
     'raya': ('Raya', 'lever', 'https://api.lever.co'),
     'canonical': ('Canonical', 'greenhouse', 'https://boards-api.greenhouse.io'),
     'circle': ('Circle', 'blocked', 'https://circle.com/careers'),
-    'uscreen': ('Uscreen', 'blocked', 'https://uscreen.tv/careers'),
+    'uscreen': ('Uscreen', 'bamboohr', 'https://uscreen.bamboohr.com'),
     'kindred': ('Kindred', 'ashby', 'https://api.ashbyhq.com'),
     'wishpond': ('Wishpond', 'lever', 'https://api.lever.co'),
     'kinsta': ('Kinsta', 'lever', 'https://api.lever.co'),
@@ -133,6 +133,11 @@ SOURCES = {
     'resilinc': ('Resilinc', 'lever', 'https://api.lever.co'),
     'workiva': ('Workiva', 'workday', 'https://workiva.wd503.myworkdayjobs.com'),
     'kong': ('Kong', 'ashby', 'https://api.ashbyhq.com'),
+    'standardchartered': ('Standard Chartered', 'sap', 'https://jobs.standardchartered.com'),
+    'tiaa': ('TIAA', 'workday', 'https://tiaa.wd1.myworkdayjobs.com'),
+    'nielseniq': ('NielsenIQ', 'smartrecruiters', 'https://api.smartrecruiters.com'),
+    'whatfix': ('Whatfix', 'trakstar', 'https://whatfix101.hire.trakstar.com'),
+    'nike': ('Nike', 'workday', 'https://nike.wd1.myworkdayjobs.com'),
 }
 VERIFIED_WORLDWIDE_SOURCES = ('supabase', 'camunda', 'livekit', 'atticus', 'alpaca',
                               'canonical', 'kindred', 'assemblyai', 'instrumentl',
@@ -162,7 +167,8 @@ WORKDAY = {'synechron': ('synechron', 'SynechronCareers'), 'hotstar': ('jiostar'
            'salesforce': ('salesforce', 'External_Career_Site'),
            'adobe': ('adobe', 'external_experienced'), 'slack': ('salesforce', 'Slack'),
            'cengage': ('cengage', 'CengageNorthAmericaCareers'),
-           'workiva': ('workiva', 'careers')}
+           'workiva': ('workiva', 'careers'), 'zoom': ('zoom', 'Zoom'),
+           'tiaa': ('tiaa', 'Search'), 'nike': ('nike', 'nke')}
 ORACLE = {'dpworld': 'CX_1', 'jpmorgan': 'CX_1001', 'akamai': 'CX_1'}
 WORKABLE_ACCOUNTS = {'cloudlinux': 'cloudlinux-1', 'passion': 'passionio', 'awesomemotive': 'awesomemotive'}
 # Keep the adapters available for explicit read-only verification, but do not
@@ -256,8 +262,9 @@ class Feed:
 
 class Description(HTMLParser):
     """Capture the verified SAP jobdescription element, preserving full HTML."""
-    def __init__(self, text):
+    def __init__(self, text, job_class="jobdescription"):
         super().__init__(convert_charrefs=False)
+        self.job_class = job_class
         self.depth, self.parts, self.wipro_label = 0, [], False
         self.feed(text)
 
@@ -266,7 +273,7 @@ class Description(HTMLParser):
             self.parts.append(self.get_starttag_text())
             if tag not in ('br', 'hr', 'img', 'input', 'meta', 'link'):
                 self.depth += 1
-        elif ('jobdescription' in dict(attrs).get('class', '').split() or
+        elif (self.job_class in dict(attrs).get('class', '').split() or
               self.wipro_label and tag == 'span' and 'rtltextaligneligible' in dict(attrs).get('class', '').split()):
             self.depth = 1
             self.wipro_label = False
@@ -680,6 +687,38 @@ def _listings(feed, rows=None):
                                 item['url'], description=item.get('jobDescription'), department=item.get('businessArea'),
                                 employment=item.get('employmentType')))
         return rows
+    if kind == 'bamboohr':
+        items = feed.json('/careers/list')['result']
+        if not isinstance(items, list) or len(items) > MAX_LISTINGS:
+            raise ValueError('Invalid BambooHR listings')
+        for item in items:
+            identifier = item['id']
+            if not isinstance(identifier, str) or not re.fullmatch(r'[0-9]{1,20}', identifier):
+                raise ValueError('Invalid BambooHR posting identifier')
+            place = item['atsLocation']
+            location = ', '.join(place[field] for field in ('city', 'state', 'country') if place.get(field))
+            rows.append(job(key, identifier, item['jobOpeningName'], location or None,
+                            origin + '/careers/' + identifier, department=item.get('departmentLabel'),
+                            employment=item.get('employmentStatusLabel')))
+        return rows
+    if kind == 'trakstar':
+        page = Page(feed.request('/'))
+        for attrs, label in page.links:
+            path = attrs.get('href', '')
+            match = re.fullmatch(r'/jobs/(fk[0-9a-z]{4,20})/', path)
+            if match is None:
+                continue
+            fields = [part.strip() for part in label.splitlines() if part.strip()]
+            if not fields:
+                raise ValueError('Trakstar listing is missing a title')
+            employment = next((part for part in fields[1:] if part in ('Full-time', 'Part-time', 'Internship')), None)
+            location = None
+            if len(fields) >= 4 and fields[1].endswith(',') and fields[2].endswith(','):
+                location = ' '.join(fields[1:4])
+            rows.append(job(key, match[1], fields[0], location, origin + path, employment=employment))
+        if not rows:
+            raise ValueError('Trakstar board returned no recognized postings')
+        return rows
     if kind == 'sitemap':
         page = Page(feed.request('/job-details-sitemap'))
         paths = sorted({attrs['href'].split('?')[0] for attrs, _ in page.links if '/job-details/' in attrs['href']})
@@ -822,6 +861,20 @@ def _listings(feed, rows=None):
             batch = [job(key, item['Id'], item['Title'], item.get('PrimaryLocation'),
                          f'{origin}/hcmUI/CandidateExperience/en/sites/{site}/job/{item["Id"]}',
                          version=item.get('PostedDate'), employment=item.get('JobSchedule')) for item in items]
+        elif kind == 'smartrecruiters':
+            payload = feed.json('/v1/companies/NielsenIQ/postings',
+                                params=dict(country='in', limit=50, offset=len(rows)))
+            count, items = total(payload['totalFound']), payload['content']
+            batch = []
+            for item in items:
+                identifier = item['id']
+                if not isinstance(identifier, str) or not re.fullmatch(r'[0-9]{1,30}', identifier):
+                    raise ValueError('Invalid SmartRecruiters posting identifier')
+                if item['company']['identifier'] != 'NielsenIQ' or item['location']['country'] != 'in':
+                    raise ValueError('SmartRecruiters posting does not match the employer or market')
+                batch.append(job(key, identifier, item['name'], item['location']['fullLocation'],
+                                 'https://jobs.smartrecruiters.com/NielsenIQ/' + identifier,
+                                 version=item['releasedDate'], employment=(item.get('typeOfEmployment') or {}).get('label')))
         elif kind == 'sap':
             payload = feed.json('/services/recruiting/v1/jobs', data=dict(
                 keywords='', locale='en_US', location='', pageNumber=page_number, sortBy='date'))
@@ -943,6 +996,23 @@ def prepare_job(job_row, deadline=None):
         if kind in ('remote', 'atlassian', 'deel', 'shopify'):
             from backend.remote_career_sources import detail
             title, location, description, employment = detail(feed, result)
+        elif kind == 'smartrecruiters':
+            identifier = result['external_id']
+            if not isinstance(identifier, str) or not re.fullmatch(r'[0-9]{1,30}', identifier):
+                raise ValueError('Invalid SmartRecruiters posting identifier')
+            detail = feed.json('/v1/companies/NielsenIQ/postings/' + identifier)
+            if detail['id'] != identifier or detail['company']['identifier'] != 'NielsenIQ':
+                raise ValueError('SmartRecruiters posting identity changed')
+            title, location = detail['name'], detail['location']['fullLocation']
+            sections = detail['jobAd']['sections']
+            description = sections['jobDescription']['text']
+            if not isinstance(description, str) or not description.strip():
+                raise ValueError('Full career description is missing')
+            for section in ('qualifications', 'additionalInformation'):
+                extra = sections.get(section, {}).get('text')
+                if isinstance(extra, str) and extra.strip():
+                    description += '<br>' + extra
+            employment = (detail.get('typeOfEmployment') or {}).get('label')
         elif kind == 'google':
             text = feed.request(result['url'])
             canonical = [attrs.get('href') for attrs in Page(text).attributes if attrs.get('rel') == 'canonical']
@@ -955,7 +1025,7 @@ def prepare_job(job_row, deadline=None):
                 raise GoogleJobUnavailable('Google posting is no longer available')
             if len(descriptions) != 1:
                 raise CareerDescriptionIncomplete('Google selected description is missing or ambiguous')
-            title = unescape(page_title[1]).removesuffix(' — Google Careers')
+            title = unescape(page_title[1]).removesuffix(' â€” Google Careers')
             location, description = result.get('location'), descriptions[0]
             validate_google_description(description)
             employment = raw.get('employmentType')
@@ -1078,6 +1148,28 @@ def prepare_job(job_row, deadline=None):
                                      'CorporateDescriptionStr', 'OrganizationDescriptionStr'))
             title, location = detail['Title'], detail.get('PrimaryLocation')
             employment = detail.get('JobSchedule')
+        elif kind == 'bamboohr':
+            identifier = result['external_id']
+            if not isinstance(identifier, str) or not re.fullmatch(r'[0-9]{1,20}', identifier):
+                raise ValueError('Invalid BambooHR posting identifier')
+            detail = feed.json('/careers/' + identifier + '/detail')['result']['jobOpening']
+            expected_url = feed.origin + '/careers/' + identifier
+            if result['url'] != expected_url or detail['jobOpeningShareUrl'] != expected_url:
+                raise ValueError('BambooHR posting identity changed')
+            title, location = detail['jobOpeningName'], result.get('location')
+            description, employment = detail['description'], detail.get('employmentStatusLabel')
+        elif kind == 'trakstar':
+            identifier = result['external_id']
+            if not isinstance(identifier, str) or not re.fullmatch(r'fk[0-9a-z]{4,20}', identifier):
+                raise ValueError('Invalid Trakstar posting identifier')
+            text = feed.request('/jobs/' + identifier + '/')
+            title_match = re.search(r'<div class="js-job-title[^"]*">([^<]+)</div>', text)
+            if title_match is None:
+                raise ValueError('Trakstar job title is missing')
+            title = unescape(title_match[1]).strip()
+            location = result.get('location')
+            description = ''.join(Description(text, job_class='jobdesciption').parts)
+            employment = raw.get('employmentType')
         elif kind in ('saphtml', 'sap'):
             description = ''.join(Description(feed.request(result['url'])).parts)
             title, location = result['title'], result.get('location')

@@ -1667,3 +1667,16 @@ window, even after their headlines have dropped out of RSS. Use
 `python -B -m scripts.run_funding_discovery --catalog-only --run` to link saved
 leads to unique existing catalog matches without network calls. Omit `--run`
 to preview those links.
+
+Zoom uses the verified Workday tenant `zoom`, site `Zoom`. Migration
+`060_verified_zoom.sql` enables an existing Zoom record, preserving its ID.
+On a fresh database, the existing catalog seed registers the source.
+
+Migration `061_verified_enterprise_career_feeds.sql` registers Standard Chartered
+(SAP), TIAA (Workday Search), Nike (Workday international nke), NielsenIQ
+(SmartRecruiters India), and Whatfix (Trakstar). Apply through the backed-up migration process. Nike's
+US Workday site is separate. The international feed can stop mid-pagination,
+so the worker preserves prior observations when a later page fails.
+
+Migration `062_verified_uscreen.sql` enables the public Uscreen BambooHR board
+while preserving the existing company ID.

@@ -52,6 +52,48 @@ class CareerSourceTests(unittest.TestCase):
         self.assertEqual(sources.WORKABLE_ACCOUNTS['awesomemotive'], 'awesomemotive')
         self.assertEqual(sources.WORKDAY['workiva'], ('workiva', 'careers'))
 
+    def test_nielseniq_uses_verified_india_postings_and_full_details(self):
+        item = dict(id='123', name='Software Engineer', company={'identifier': 'NielsenIQ'},
+                    location={'country': 'in', 'fullLocation': 'Chennai, India'},
+                    releasedDate='2026-11-20', typeOfEmployment={'label': 'Full-time'})
+        with patch.object(sources.Feed, 'json', return_value={'totalFound': 1, 'content': [item]}) as fetch:
+            posting, = sources.fetch('nielseniq')
+        self.assertEqual(fetch.call_args.kwargs['params'], dict(country='in', limit=50, offset=0))
+        self.assertEqual(posting['url'], 'https://jobs.smartrecruiters.com/NielsenIQ/123')
+        posting['raw_json'] = json.dumps(posting['raw_json'])
+        detail = dict(item, jobAd={'sections': {'jobDescription': {'text': 'Build software.'},
+                                                'qualifications': {'text': 'Know Python.'}}})
+        with patch.object(sources.Feed, 'json', return_value=detail):
+            prepared = sources.prepare_job(posting)
+        self.assertEqual(json.loads(prepared['raw_json'])['descriptionHtml'], 'Build software.<br>Know Python.')
+        with patch.object(sources.Feed, 'json', return_value=dict(detail, id='456')):
+            with self.assertRaisesRegex(ValueError, 'identity changed'):
+                sources.prepare_job(posting)
+
+    def test_whatfix_public_job_link_and_full_description(self):
+        page = '<a href="/jobs/fk01234/">Software Engineer\nBengaluru,\nKarnataka,\nIndia\nFull-time</a>'
+        with patch.object(sources.Feed, 'request', return_value=page):
+            posting, = sources.fetch('whatfix')
+        self.assertEqual(posting['location'], 'Bengaluru, Karnataka, India')
+        posting['raw_json'] = json.dumps(posting['raw_json'])
+        detail = '<div class="js-job-title rb-text-1">Software Engineer</div><div class="jobdesciption"><p>Build software.</p></div>'
+        with patch.object(sources.Feed, 'request', return_value=detail):
+            prepared = sources.prepare_job(posting)
+        self.assertEqual(json.loads(prepared['raw_json'])['descriptionHtml'], '<p>Build software.</p>')
+
+    def test_uscreen_bamboohr_fetches_detail_for_the_same_posting(self):
+        item = dict(id='165', jobOpeningName='Engineer', atsLocation={'country': 'India'})
+        with patch.object(sources.Feed, 'json', return_value={'result': [item]}):
+            posting, = sources.fetch('uscreen')
+        self.assertEqual(posting['location'], 'India')
+        posting['raw_json'] = json.dumps(posting['raw_json'])
+        detail = dict(jobOpeningName='Engineer', jobOpeningShareUrl=posting['url'], description='Build software.')
+        with patch.object(sources.Feed, 'json', return_value={'result': {'jobOpening': detail}}):
+            self.assertEqual(json.loads(sources.prepare_job(posting)['raw_json'])['descriptionHtml'], 'Build software.')
+            detail['jobOpeningShareUrl'] += '0'
+            with self.assertRaisesRegex(ValueError, 'identity changed'):
+                sources.prepare_job(posting)
+
     def google_candidate(self):
         url = 'https://www.google.com/about/careers/applications/jobs/results/90108035430523590-software-engineer/'
         candidate = sources.job('google', '90108035430523590', 'Software Engineer', 'India', url)
@@ -85,7 +127,7 @@ class CareerSourceTests(unittest.TestCase):
     def test_google_complete_selected_description_keeps_identity_and_sections(self):
         candidate = self.google_candidate()
         description = '<div class="DkhPwc"><h3>Minimum qualifications:</h3><ul><li>Python experience</li></ul><h3>About the job</h3><p>Build services</p><h3>Responsibilities</h3><p>Deliver services</p></div>'
-        page = '<title>Software Engineer — Google Careers</title><link rel="canonical" href="' + candidate['url'] + '">' + description
+        page = '<title>Software Engineer â€” Google Careers</title><link rel="canonical" href="' + candidate['url'] + '">' + description
         with patch.object(sources.Feed, 'request', return_value=page):
             result = sources.prepare_job(candidate)
         self.assertEqual(json.loads(result['raw_json'])['descriptionHtml'], description)
