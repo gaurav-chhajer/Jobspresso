@@ -1293,13 +1293,13 @@ class LocalHostedWatcherTests(unittest.TestCase):
             email.assert_not_called()
             client.close.assert_called_once()
 
-    def test_watch_waits_five_minutes_then_stops_on_failure(self):
+    def test_watch_waits_one_hour_then_stops_on_failure(self):
         with patch.object(watcher, 'exclusive_cycle'), \
                 patch.object(watcher, 'run_cycle', side_effect=[0, 1]) as cycle, \
                 patch.object(watcher.time, 'sleep') as sleep:
             self.assertEqual(watcher.main(['--run', '--provider', 'similarity']), 1)
         self.assertEqual(cycle.call_count, 2)
-        self.assertEqual(sum(call.args[0] for call in sleep.call_args_list), 300)
+        self.assertEqual(sum(call.args[0] for call in sleep.call_args_list), 3600)
 
     def test_once_interrupt_and_uncertain_errors_do_not_retry(self):
         for outcome, expected in ((0, 0), (KeyboardInterrupt(), 130), (requests.Timeout('private'), 1)):
