@@ -1,5 +1,11 @@
 # Jobspresso
 
+Migration `065_verified_discovery_boards.sql` imports the 105 boards listed in
+`verified_boards_discovery.csv`. It upgrades matching discovery-only company
+records in place, preserving IDs, saved jobs and subscriptions, and inserts
+missing companies once. Patreon retains its registered Ashby adapter. Back up
+the database before applying migrations; the import itself makes no network calls.
+
 YC startup jobs use the existing shared-pool fetch and worker sync. Public YC role/location pages are collected without Tavily; stable YC job IDs are stored under each startup's employer identity. These curated pages are additive observations, not a complete vacancy feed: missing listings never close saved jobs. Existing senior-role eligibility filtering still applies. Full descriptions are fetched from public job pages when scoring needs them. A local fetch seeds the `yc` catalog entry; hosted workers require the updated server and catalog sync before fetching YC.
 
 Hosted description updates verify YC job IDs, employer identity and YC URLs against the startup record. Optional web-discovery failures are logged and not replayed; direct career feeds continue through the existing partial-failure policy.
