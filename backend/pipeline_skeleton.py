@@ -22,7 +22,7 @@ from email.message import EmailMessage
 import re
 import requests
 from pathlib import Path
-from contextlib import closing
+from contextlib import closing, nullcontext
 from itertools import islice
 from html import escape, unescape
 from html.parser import HTMLParser
@@ -209,7 +209,7 @@ def fetch_jobs_for_company(company_row):
     return fetcher(company_row["board_slug"])
 
 
-def upsert_jobs(conn, company_id, fetched_jobs, *, additive=False):
+def upsert_jobs(conn, company_id, fetched_jobs, *, additive=False, commit=True):
     from backend.job_ingestion import deduplicate, mode_for_source
     company = conn.execute('SELECT career_source FROM companies WHERE id=?', (company_id,)).fetchone()
     if company is None:
@@ -227,7 +227,10 @@ def upsert_jobs(conn, company_id, fetched_jobs, *, additive=False):
     source_company_id = company_id
     changed_companies = set()
     changed = []
-    with conn:
+    # Worker receipts must commit in the same transaction as the job changes.
+    if not commit and not conn.in_transaction:
+        raise ValueError('An explicit transaction is required')
+    with conn if commit else nullcontext():
         now = datetime.now(timezone.utc).isoformat()
         previous_snapshot = {row[0]: row[1] for row in conn.execute(
             "SELECT external_id,raw_json FROM jobs WHERE company_id=? AND is_active=1", (company_id,))}

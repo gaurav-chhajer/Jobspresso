@@ -12,6 +12,7 @@ import os
 import re
 import smtplib
 import time
+import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -321,10 +322,28 @@ def register_routes(application, connection, database):
                         (reported_at.astimezone(INDIA).date().isoformat(), slot, increment))
         return {"saved": True, "revision": revision}
 
+    @routes.get("/feed-receipt")
+    def feed_receipt():
+        company_id = store.integer(request.args.get('company_id', ''), 1, 2147483647)
+        receipt = connection().execute(
+            'SELECT token,digest,saved,saved_at FROM feed_transfer_receipts WHERE company_id=?',
+            (company_id,)).fetchone()
+        return {'receipt': dict(receipt) if receipt else None}
+
     @routes.post("/observations")
     @routes.post("/snapshot")
     def snapshot():
         data = body()
+        transfer = data.get('transfer')
+        if transfer is not None and (not isinstance(transfer, dict) or
+                set(transfer) != {'token', 'previous'} or
+                not isinstance(transfer['token'], str) or
+                not re.fullmatch(r'[a-f0-9]{32}', transfer['token']) or
+                transfer['previous'] is not None and (not isinstance(transfer['previous'], str) or
+                    not re.fullmatch(r'[a-f0-9]{32}', transfer['previous']))):
+            raise ValueError('Invalid transfer identity')
+        digest = hashlib.sha256(json.dumps(dict(endpoint=request.path.rsplit('/', 1)[-1], payload=data),
+            sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
         company_id = positive_id(data.get("company_id"))
         jobs = data.get("jobs")
         if not isinstance(jobs, list) or len(jobs) > MAX_JOBS:
@@ -353,6 +372,15 @@ def register_routes(application, connection, database):
                                    (company_id,)).fetchone()
             if company is None or data.get("fingerprint") != fingerprint(dict(company)):
                 return {"error": "Company changed; fetch again"}, 409
+            receipt = conn.execute('SELECT token,digest,saved FROM feed_transfer_receipts WHERE company_id=?',
+                                   (company_id,)).fetchone()
+            if transfer is not None:
+                if receipt and receipt['token'] == transfer['token']:
+                    if receipt['digest'] != digest:
+                        return {'error': 'Transfer identity reused with different content'}, 409
+                    return {'saved': receipt['saved'], 'token': receipt['token'], 'digest': digest}
+                if transfer['previous'] != (receipt['token'] if receipt else None):
+                    return {'error': 'Newer transfer exists; fetch again'}, 409
             from backend.job_ingestion import deduplicate, mode_for_source
             additive = request.path.endswith('/observations')
             mode = 'observed' if additive else mode_for_source(company['career_source'])
@@ -361,8 +389,13 @@ def register_routes(application, connection, database):
             if mode == 'snapshot' and len(seen) != len(jobs):
                 raise ValueError('Duplicate snapshot jobs')
             jobs = deduplicate(jobs, mode)
-            pipeline.upsert_jobs(conn, company_id, jobs, additive=additive)
-        return {"saved": len(jobs)}
+            pipeline.upsert_jobs(conn, company_id, jobs, additive=additive, commit=False)
+            token = transfer['token'] if transfer else uuid.uuid4().hex
+            conn.execute('''INSERT INTO feed_transfer_receipts(company_id,token,digest,saved,saved_at)
+                VALUES(?,?,?,?,?) ON CONFLICT(company_id) DO UPDATE SET token=excluded.token,
+                digest=excluded.digest,saved=excluded.saved,saved_at=excluded.saved_at''',
+                (company_id, token, digest, len(jobs), datetime.now(timezone.utc).isoformat()))
+        return ({'saved': len(jobs), 'token': token, 'digest': digest} if transfer else {"saved": len(jobs)})
 
     @routes.get("/work")
     def work():

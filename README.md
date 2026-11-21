@@ -1680,3 +1680,33 @@ so the worker preserves prior observations when a later page fails.
 
 Migration `062_verified_uscreen.sql` enables the public Uscreen BambooHR board
 while preserving the existing company ID.
+
+### Durable direct-feed recovery
+
+The continuous hosted worker keeps per-company recovery state in
+`data/feed_recovery.db`. Back this file up with the worker's local data when
+moving the worker. Downloaded feeds and the exact outstanding transfer survive
+restarts. Each scheduler pass attempts each due company once. Failures remain
+pending with exponential backoff from one minute to one hour; successful feeds
+refresh hourly. The scheduler checks for due work every minute. Direct feeds are
+processed sequentially to bound buffered data and hosted load. Scoring remains
+independent, and web discovery retains the local worker's hourly cadence.
+
+Apply additive migration `064_feed_transfer_receipts.sql` after a verified
+database backup, and deploy the hosted endpoint before restarting the worker.
+Receipts commit atomically with jobs and matching tasks. After a timeout the
+worker checks the receipt before replaying its exact request. A newer transfer
+or changed catalog invalidates stale pending content. Every batch must have an
+acknowledged job count and content digest before a company is marked saved.
+Large feeds retain the existing additive ingestion policy; unseen jobs are not
+closed by individual batches. Incomplete or repeated pagination stays pending.
+
+Recovery cannot repair a removed board, revoked credential, or incompatible
+source response by retrying. Such failures remain visible in worker health and
+the recovery database (`status`, `error`, `attempts`, `due`, `last_success`, and
+`job_count`). Logs report aggregate saved/pending coverage and per-company error
+types and HTTP status codes. A saved company means the configured feed completed
+and its returned jobs were acknowledged, subject to existing source scope and
+eligibility filtering; it does not imply discovery-only or disabled boards were
+fetched. Spool limits are 64 MiB per company and 512 MiB total; reaching a limit
+leaves the company pending and reports an error.

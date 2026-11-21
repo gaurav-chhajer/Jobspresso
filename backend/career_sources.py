@@ -428,7 +428,7 @@ def apple_location(item):
                                                            place.get('countryName')))) for place in places)) or None
 
 
-def fetch(key, deadline=None):
+def fetch(key, deadline=None, *, require_complete=False):
     import logging
     from backend.job_ingestion import deduplicate, mode_for_source
     mode = mode_for_source(key)
@@ -438,7 +438,7 @@ def fetch(key, deadline=None):
         try:
             _listings(feed, rows)
         except (requests.RequestException, ValueError, KeyError, TypeError) as error:
-            if mode != 'observed' or not rows:
+            if require_complete or mode != 'observed' or not rows:
                 raise
             # Only fixed local messages are safe; external exception text can
             # contain response bodies, URLs or credentials. Local raise sites
@@ -474,6 +474,8 @@ def fetch(key, deadline=None):
         if len(rows) > MAX_LISTINGS or mode == 'snapshot' and len({row['external_id'] for row in rows}) != len(rows):
             raise ValueError('Career snapshot is oversized or contains duplicate jobs')
         if mode == 'observed' and len({row['external_id'] for row in rows}) != len(rows):
+            if require_complete:
+                raise ValueError('Repeated pagination cannot confirm complete source coverage')
             logging.getLogger(__name__).warning('Repeated paginated observations: source=%s rows=%s', key, len(rows))
         rows = deduplicate(rows, mode)
         # The same senior-title rule already governs eligibility in the pipeline.

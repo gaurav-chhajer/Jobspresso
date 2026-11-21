@@ -20,6 +20,50 @@ RUN = 'b' * 32
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_cleanup_preserves_active_pending_two_recent_and_shared_data(self):
+        with tempfile.TemporaryDirectory(dir='tests') as directory:
+            root = Path(directory).resolve()
+            releases = root / '.releases'
+            releases.mkdir()
+            for index, letter in enumerate('abcdef'):
+                revision = releases / (letter * 40)
+                revision.mkdir()
+                (revision / 'app.py').write_text('code')
+                os.utime(revision, ns=(index + 1, index + 1))
+            data = root / 'data'
+            data.mkdir()
+            (data / 'jobs.db').write_bytes(b'protected')
+            (releases / 'unknown.staging').mkdir()
+            with patch.object(release, 'ROOT', root), patch.object(release, 'RELEASES', releases):
+                release._release_cleanup('a' * 40, 'b' * 40)
+            self.assertEqual({entry.name for entry in releases.iterdir()},
+                             {letter * 40 for letter in 'abef'} | {'unknown.staging'})
+            self.assertEqual((data / 'jobs.db').read_bytes(), b'protected')
+
+    def test_cleanup_without_active_revision_preserves_everything(self):
+        with tempfile.TemporaryDirectory(dir='tests') as directory:
+            root = Path(directory).resolve()
+            releases = root / '.releases'
+            releases.mkdir()
+            (releases / SHA).mkdir()
+            with patch.object(release, 'ROOT', root), patch.object(release, 'RELEASES', releases):
+                release._release_cleanup(None, SHA)
+                with self.assertRaisesRegex(ValueError, 'Active release'):
+                    release._release_cleanup('c' * 40, SHA)
+            self.assertTrue((releases / SHA).is_dir())
+
+    def test_cleanup_failure_is_not_silenced(self):
+        with tempfile.TemporaryDirectory(dir='tests') as directory:
+            root = Path(directory).resolve()
+            releases = root / '.releases'
+            releases.mkdir()
+            for letter in 'abcde':
+                (releases / (letter * 40)).mkdir()
+            with patch.object(release, 'ROOT', root), patch.object(release, 'RELEASES', releases), \
+                    patch.object(release.shutil, 'rmtree', side_effect=OSError('failed')):
+                with self.assertRaises(OSError):
+                    release._release_cleanup('a' * 40, 'b' * 40)
+
     def test_backup_accepts_measured_latency_but_still_rejects_deadline_and_corruption(self):
         for elapsed, check, error in ((91, 'ok', None), (121, 'ok', 'time budget'),
                                       (91, 'corrupt', 'integrity check')):

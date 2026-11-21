@@ -202,53 +202,24 @@ class QueuedWorkerTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'invalid'):
                 watch_hosted_jobs.load_fetch_cursor(path)
 
-    def test_fetch_loop_resumes_from_and_persists_cursor(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            path = Path(temporary) / 'hosted_fetch_cursor.json'
-            watch_hosted_jobs.save_fetch_cursor(42, path)
-            stop = MagicMock()
-            stop.is_set.return_value = False
-            stop.wait.return_value = True
+    def test_fetch_recovery_checks_due_work_after_one_minute(self):
+        stop = MagicMock()
+        stop.is_set.return_value = False
+        stop.wait.return_value = True
+        with patch.object(watch_hosted_jobs.fetch_recovery, 'run_round') as fetch, \
+                patch.object(watch_hosted_jobs.time, 'monotonic', side_effect=[100, 120]):
+            self.assertEqual(watch_hosted_jobs._fetch_loop('client', stop), 0)
+        fetch.assert_called_once_with('client', 100 + runner.MATCHING_SECONDS, stop)
+        stop.wait.assert_called_once_with(40)
 
-            def fetch(client, deadline, **kwargs):
-                self.assertEqual(kwargs['start_after_company_id'], 42)
-                kwargs['progress_callback'](91)
-                return 0
-
-            with patch.object(watch_hosted_jobs, 'FETCH_CURSOR_PATH', path), \
-                    patch.object(runner, '_fetch_and_score', side_effect=fetch) as run_fetch, \
-                    patch.object(watch_hosted_jobs.time, 'monotonic', return_value=100):
-                self.assertEqual(watch_hosted_jobs._fetch_loop('client', stop), 0)
-            self.assertEqual(run_fetch.call_count, 1)
-            self.assertEqual(watch_hosted_jobs.load_fetch_cursor(path), 91)
-
-    def test_fetch_cadence_uses_start_time_and_does_not_overlap_long_fetches(self):
-        for duration, expected_delay in ((20, 280), (300, 0), (450, 0)):
-            with self.subTest(duration=duration):
-                stop = MagicMock()
-                stop.is_set.return_value = False
-                stop.wait.return_value = True
-                with patch.object(watch_hosted_jobs, 'load_fetch_cursor', return_value=None), \
-                        patch.object(runner, '_fetch_and_score', return_value=0) as fetch, \
-                        patch.object(watch_hosted_jobs.time, 'monotonic', side_effect=[100, 100 + duration]):
-                    self.assertEqual(watch_hosted_jobs._fetch_loop('client', stop), 0)
-                fetch.assert_called_once()
-                args, kwargs = fetch.call_args
-                self.assertEqual(args, ('client', 100 + runner.MATCHING_SECONDS))
-                self.assertEqual({key: kwargs[key] for key in
-                                  ('fetch_only', 'pool', 'stop', 'allow_partial',
-                                   'start_after_company_id')},
-                                 dict(fetch_only=True, pool=None, stop=stop, allow_partial=True,
-                                      start_after_company_id=None))
-                self.assertTrue(callable(kwargs['progress_callback']))
-                stop.wait.assert_called_once_with(expected_delay)
-
-    def test_fetch_failure_preserves_queue_and_does_not_restart_uncertain_writes(self):
-        stop = threading.Event()
-        with patch.object(runner, '_fetch_and_score', return_value=1) as fetch:
-            self.assertEqual(watch_hosted_jobs._fetch_loop('client', stop), 1)
+    def test_catalog_failure_keeps_recovery_scheduler_alive(self):
+        stop = MagicMock()
+        stop.is_set.return_value = False
+        stop.wait.return_value = True
+        with patch.object(watch_hosted_jobs.fetch_recovery, 'run_round', side_effect=requests.Timeout) as fetch:
+            self.assertEqual(watch_hosted_jobs._fetch_loop('client', stop), 0)
         fetch.assert_called_once()
-        self.assertFalse(stop.is_set())
+        stop.wait.assert_called_once()
 
     def test_real_loops_fetch_again_while_scoring_is_still_busy(self):
         scoring_started, second_fetch, emailed = threading.Event(), threading.Event(), threading.Event()
@@ -256,8 +227,7 @@ class QueuedWorkerTests(unittest.TestCase):
         sessions = [MagicMock(), MagicMock()]
         shared_stop = []
 
-        def fetch(client, deadline, *, fetch_only, pool, stop, allow_partial,
-                  start_after_company_id, progress_callback):
+        def fetch(client, deadline, stop):
             self.assertTrue(scoring_started.wait(2))
             count.append(1)
             client.call('snapshot', {'jobs': []})
@@ -279,9 +249,9 @@ class QueuedWorkerTests(unittest.TestCase):
             return 0
 
         with patch.object(watch_hosted_jobs, 'exclusive_cycle'), \
-                patch.object(watch_hosted_jobs, 'CHECK_INTERVAL_SECONDS', 0), \
+                patch.object(watch_hosted_jobs, 'FETCH_RECOVERY_POLL_SECONDS', 0), \
                 patch.object(runner, 'HostedClient', side_effect=sessions), \
-                patch.object(runner, '_fetch_and_score', side_effect=fetch), \
+                patch.object(watch_hosted_jobs.fetch_recovery, 'run_round', side_effect=fetch), \
                 patch.object(runner, 'score_pending', side_effect=score), \
                 patch.object(runner, 'send_emails', side_effect=email):
             self.assertEqual(watch_hosted_jobs.run_queued(), 0)
@@ -296,8 +266,7 @@ class QueuedWorkerTests(unittest.TestCase):
         scorer = MagicMock()
         scorer_thread = []
 
-        def fetch(client, deadline, *, fetch_only, pool, stop, allow_partial,
-                  start_after_company_id, progress_callback):
+        def fetch(client, deadline, stop):
             client.call('snapshot', {'jobs': [{'id': 1}]})
             snapshot_saved.set()
             self.assertTrue(score_saved.wait(2), 'Scoring waited for fetching to finish')
@@ -319,7 +288,7 @@ class QueuedWorkerTests(unittest.TestCase):
 
         with patch.object(watch_hosted_jobs, 'exclusive_cycle'), \
                 patch.object(runner, 'HostedClient', side_effect=clients), \
-                patch.object(runner, '_fetch_and_score', side_effect=fetch), \
+                patch.object(watch_hosted_jobs.fetch_recovery, 'run_round', side_effect=fetch), \
                 patch('backend.local_embeddings.LocalScorer', side_effect=create_scorer), \
                 patch.object(runner, 'score_pending_deterministic', side_effect=score) as scoring, \
                 patch.object(runner, 'score_pending') as groq, \
