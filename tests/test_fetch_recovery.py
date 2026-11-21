@@ -98,6 +98,20 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(self.state()['job_count'], 1)
         self.assertEqual(self.state()['last_success'], 1060)
 
+    def test_failure_health_is_accepted_by_live_endpoint_contract(self):
+        self.setup_recovery()
+        self.timeout_before_commit = True
+        def health(client, worker, state, company_id=0, job_count=0, error_code=''):
+            response = self.call('health', dict(worker=worker, state=state, company_id=company_id,
+                                               job_count=job_count, error_code=error_code))
+            self.assertEqual(response.status_code, 200)
+        with patch.object(worker, 'report_health', side_effect=health), \
+                patch.object(worker, '_download_company', return_value=self.jobs):
+            self.run_round()
+        row = self.conn.execute("SELECT state,error_code FROM worker_health WHERE worker='fetch' AND company_id=?",
+                                (self.company['id'],)).fetchone()
+        self.assertEqual(tuple(row), ('failed', 'transfer_error'))
+
     def test_partial_source_is_not_counted_as_success(self):
         self.setup_recovery()
         self.company = dict(self.company, career_source='salesforce')

@@ -146,6 +146,7 @@ def attempt(conn, client, row, deadline, stop):
 
 def run_round(client, deadline, stop, *, path=STATE_PATH):
     """One bounded attempt per due company; the scheduler owns subsequent attempts."""
+    worker.report_health(client, 'fetch', 'running')
     with closing(connect(path)) as conn:
         synchronize(conn, client.call('companies').get('companies'))
         rows = conn.execute("SELECT company_id FROM feeds WHERE status<>'inactive' AND due<=? ORDER BY due,company_id",
@@ -170,10 +171,16 @@ def run_round(client, deadline, stop, *, path=STATE_PATH):
                                      (row['company_id'],))
                     conn.execute("UPDATE feeds SET status='pending',attempts=?,due=?,error=? WHERE company_id=?",
                                  (attempts, time.time() + delay, code, row['company_id']))
-                worker.report_health(client, 'fetch', 'failed', row['company_id'], error_code='recovery_pending')
+                transferred = conn.execute('SELECT payload IS NOT NULL FROM feeds WHERE company_id=?',
+                                           (row['company_id'],)).fetchone()[0]
+                worker.report_health(client, 'fetch', 'failed', row['company_id'],
+                                     error_code='transfer_error' if transferred else 'source_error')
                 logger.error('Feed remains pending: company_id=%s error=%s retry_seconds=%s attempts=%s',
                              row['company_id'], code, delay, attempts)
         counts = dict(conn.execute('SELECT status,count(*) FROM feeds GROUP BY status').fetchall())
         logger.info('Durable feed coverage: saved=%s pending=%s transferring=%s inactive=%s',
                     counts.get('saved', 0), counts.get('pending', 0), counts.get('transferring', 0), counts.get('inactive', 0))
+        incomplete = bool(counts.get('pending', 0) or counts.get('transferring', 0))
+        worker.report_health(client, 'fetch', 'failed' if incomplete else 'idle',
+                             job_count=counts.get('saved', 0), error_code='worker_error' if incomplete else '')
     return 0
