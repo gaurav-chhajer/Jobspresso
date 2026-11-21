@@ -1,5 +1,12 @@
 # Jobspresso
 
+Migration `066_verified_review_boards.sql` adds the 21 live boards reviewed from
+`needs_review_boards.csv`; the resolved catalog is in
+`data/boards/verified_review_boards.csv`. Employer identities are matched by
+verified board or confirmed YC employer slug, preserving unrelated namesakes.
+Both Porter boards remain separate: Porter Cares and Porter Works. Existing
+company IDs, saved jobs and subscriptions are retained. Back up before migration.
+
 Migration `065_verified_discovery_boards.sql` imports the 105 boards listed in
 `verified_boards_discovery.csv`. It upgrades matching discovery-only company
 records in place, preserving IDs, saved jobs and subscriptions, and inserts
