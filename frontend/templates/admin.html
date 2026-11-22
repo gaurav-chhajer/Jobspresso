@@ -11,7 +11,7 @@
 <label><input type="checkbox" name="active" {% if c and c.active %}checked{% endif %}> Active</label><label><input type="checkbox" name="discovery_only" {% if c and c.discovery_only %}checked{% endif %}> Discovery only</label><button class="btn">Save company</button></form>{% endmacro %}
 {% block admin_content %}
 <h1>{{ admin_title }}</h1>
-{% if admin_page in ['overview','companies','system'] %}<section class="card"><h2>Worker health</h2><p class="sub">Worker report times are shown in IST. More than 15 minutes without a worker update is stale. Completed company fetches keep their latest result; running does not confirm successful saves. Fetching targets five-minute intervals; long passes can exceed this.</p>{% for key,label in [('fetch','Company fetching'),('score','Live scoring')] %}{% set h=worker_health.get((key,0)) %}<p><b>{{ label }}: {{ h.display_state if h else 'Not reported' }}</b> &middot; Last report: {{ h.updated_at|admin_time if h else 'Not reported' }}{% if h and h.error_code %} &middot; {{ h.error_code }}{% endif %}</p>{% endfor %}</section>{% endif %}
+{% if admin_page in ['overview','system'] %}<section class="card"><h2>Worker health</h2><p class="sub">Worker report times are shown in IST. More than 15 minutes without a worker update is stale. Completed company fetches keep their latest result; running does not confirm successful saves. Fetching targets five-minute intervals; long passes can exceed this.</p>{% for key,label in [('fetch','Company fetching'),('score','Live scoring')] %}{% set h=worker_health.get((key,0)) %}<p><b>{{ label }}: {{ h.display_state if h else 'Not reported' }}</b> &middot; Last report: {{ h.updated_at|admin_time if h else 'Not reported' }}{% if h and h.error_code %} &middot; {{ h.error_code }}{% endif %}</p>{% endfor %}</section>{% endif %}
 {% if admin_page=='overview' %}{% set o=overview %}
 <div class="alerts">{% if board_check_failures %}<a class="al" href="{{ url_for('admin.page',page='companies') }}">{{ board_check_failures }} unavailable board checks</a>{% endif %}{% if o.failed %}<a class="al" href="{{ url_for('admin.page',page='queue') }}">{{ o.failed }} failed matching tasks</a>{% endif %}{% if mail_paused %}<a class="al" href="{{ url_for('admin.page',page='email') }}">Email sending is paused</a>{% endif %}</div>
 <div class="kgrid">{% for label,value in [('Users',o.total),('Verified',o.verified),('Active in 7 days',o.active)] %}<div class="card stat"><p class="sub">{{ label }}</p><b>{{ value }}</b></div>{% endfor %}</div>
@@ -26,9 +26,81 @@
 <div class="toolbar">{{ action_form('disable' if u.active else 'enable','Disable account' if u.active else 'Enable account',url_for('admin.account_action',user_id=u.user_id)) }}{{ action_form('demote' if u.is_admin else 'promote','Demote admin' if u.is_admin else 'Promote to admin',url_for('admin.account_action',user_id=u.user_id)) }}{{ action_form('signout','Force sign-out',url_for('admin.account_action',user_id=u.user_id)) }}{{ action_form('unlock','Unlock account',url_for('admin.account_action',user_id=u.user_id)) }}</div>
 <details><summary>Send account email</summary><form method="post" action="{{ url_for('admin.account_email',user_id=u.user_id) }}" class="page-form">{{ csrf() }}<select name="action" aria-label="Email type"><option value="reset">Password reset</option>{% if not u.email_verified %}<option value="verify">Email verification</option>{% endif %}</select><label><input name="confirm_send" value="yes" type="checkbox" required> Send one real email to this account</label><button class="btn">Send email</button></form></details>
 {% if u.user_id!=user.id %}<details><summary>Delete account permanently</summary><p class="sub">Deletes private records and uploaded resumes. The last active verified admin is protected.</p><form method="post" action="{{ url_for('admin_delete_user',user_id=u.user_id) }}" class="page-form">{{ csrf() }}<label>Type account email<input name="confirm_email" type="email" required maxlength="254" autocomplete="off"></label><button class="btn">Permanently delete</button></form></details>{% endif %}</dialog></td></tr>{% else %}<tr><td colspan="7">No matching accounts.</td></tr>{% endfor %}</tbody></table></div>
-{% elif admin_page=='companies' %}<form method="get" class="toolbar"><input name="q" type="search" maxlength="200" value="{{ admin_query }}" placeholder="Search companies" aria-label="Search companies"><button class="btn">Search</button></form>
-<details class="card"><summary>Add company</summary>{{ company_form() }}</details>
-<div class="tw"><table class="tbl"><thead><tr><th>Company</th><th>Source</th><th>Active</th><th>Subscribers</th><th>Active jobs</th><th>Last observed job</th><th>Latest fetch / last success (IST)</th><th>Actions</th></tr></thead><tbody>{% for c in admin_companies %}<tr><td><b>{{ c.name }}</b>{% if c.unavailable %}<span class="badge warn">Known unavailable / unverified</span>{% endif %}{% if c.discovery_only %}<span class="badge">Discovery only</span>{% endif %}</td><td>{{ c.career_source or c.ats_type }}</td><td>{{ 'Yes' if c.active else 'No' }}</td><td class="num">{{ c.subscribers }}</td><td class="num">{{ c.openings }}</td><td>{{ c.last_seen|admin_time if c.last_seen else 'Unavailable' }}</td><td>{% set h=worker_health.get(('fetch',c.id)) %}{% if h %}<b>{{ h.display_state }}</b><br>Attempt: {{ h.updated_at|admin_time }}<br>Saved: {{ h.last_success_at|admin_time if h.last_success_at else 'Never reported' }}<br>Jobs: {{ h.job_count }}{% if h.error_code %}<br>{{ h.error_code }}{% endif %}{% else %}Not reported{% endif %}</td><td><details><summary>Check board</summary><form method="post" action="{{ url_for('admin.company_check',company_id=c.id) }}" class="page-form">{{ csrf() }}<label><input type="checkbox" name="confirm_check" value="yes" required> Run a real read-only source request</label><button class="btn sbtn">Check board</button></form></details><details><summary>Edit / enable / disable</summary>{{ company_form(c) }}</details></td></tr>{% else %}<tr><td colspan="7">No companies.</td></tr>{% endfor %}</tbody></table></div><p class="sub">Last observed job is not proof that the latest fetch succeeded. Check results appear in the audit log.</p>
+{% elif admin_page=='companies' %}
+{# ---- classify every company once so the page can group, count and filter it ---- #}
+{% set ns = namespace(total=0, active=0, inactive=0, attention=0, discovery=0) %}
+{% for c in admin_companies %}
+  {% set h = worker_health.get(('fetch', c.id)) %}
+  {% set st = (h.display_state|string|lower) if h else '' %}
+  {% if not c.active %}{% set ns.inactive = ns.inactive + 1 %}
+  {% elif c.unavailable or (h and (h.error_code or 'fail' in st or 'error' in st or 'stale' in st)) or not h %}{% set ns.attention = ns.attention + 1 %}{% endif %}
+  {% if c.active %}{% set ns.active = ns.active + 1 %}{% endif %}
+  {% if c.discovery_only %}{% set ns.discovery = ns.discovery + 1 %}{% endif %}
+  {% set ns.total = ns.total + 1 %}
+{% endfor %}
+
+{# 1. Pipeline status: two worker signals on one line, long explanation tucked away #}
+<section class="co-health" aria-label="Worker health">
+  {% for key,label in [('fetch','Company fetching'),('score','Live scoring')] %}{% set wh = worker_health.get((key,0)) %}
+  <div class="co-health-item"><span class="dot {{ 'ok' if wh and not wh.error_code else ('bad' if wh else 'none') }}" aria-hidden="true"></span>
+    <div><b>{{ label }}</b><small>{{ wh.display_state if wh else 'Not reported' }}{% if wh %} · last report {{ wh.updated_at|admin_time }}{% endif %}{% if wh and wh.error_code %} · {{ wh.error_code }}{% endif %}</small></div></div>
+  {% endfor %}
+  <details class="co-help"><summary>How to read this page</summary>
+    <p class="sub">Times are IST. A worker with no update for 15+ minutes is stale. Fetching targets five-minute intervals; long passes can exceed this. "Running" does not confirm that results were saved, and the last observed job is not proof that the latest fetch succeeded. Board-check results appear in the audit log.</p></details>
+</section>
+
+{# 2. One control row: find, filter (with counts), sort, add #}
+<section class="co-controls" id="co-controls" data-total="{{ ns.total }}" data-paged="{{ 1 if (admin_number>1 or admin_more) else 0 }}">
+  <form method="get" class="co-search" role="search"><input name="q" type="search" maxlength="200" value="{{ admin_query }}" placeholder="Search companies" aria-label="Search companies"><button class="btn">Search</button></form>
+  <button class="btn" type="button" data-open-dialog="company-new">+ Add company</button>
+  <div class="co-filters" role="group" aria-label="Filter companies">
+    <button type="button" class="co-chip" data-filter="all" aria-pressed="true">All <b>{{ ns.total }}</b></button>
+    <button type="button" class="co-chip warn" data-filter="attention" aria-pressed="false">Needs attention <b>{{ ns.attention }}</b></button>
+    <button type="button" class="co-chip" data-filter="active" aria-pressed="false">Active <b>{{ ns.active }}</b></button>
+    <button type="button" class="co-chip" data-filter="inactive" aria-pressed="false">Inactive <b>{{ ns.inactive }}</b></button>
+    <button type="button" class="co-chip" data-filter="discovery" aria-pressed="false">Discovery only <b>{{ ns.discovery }}</b></button>
+  </div>
+  <label class="co-sort">Sort by <select id="co-sort" aria-label="Sort companies">
+    <option value="attention">Needs attention first</option><option value="name">Name (A–Z)</option><option value="subscribers">Most subscribers</option><option value="jobs">Most active jobs</option></select></label>
+  <p class="sub" id="co-status" role="status" aria-live="polite"></p>
+</section>
+
+{# 3. The list: one row per company, five scannable columns, everything else lives behind Manage #}
+<div class="tw co-wrap"><table class="tbl co-tbl" id="co-table">
+  <thead><tr><th scope="col">Company</th><th scope="col">Status</th><th scope="col">Fetch health</th><th scope="col" class="num">Active jobs</th><th scope="col" class="num">Subscribers</th><th scope="col"><span class="sr">Actions</span></th></tr></thead>
+  <tbody>
+  {% for c in admin_companies %}
+    {% set h = worker_health.get(('fetch', c.id)) %}
+    {% set st = (h.display_state|string|lower) if h else '' %}
+    {% if not c.active %}{% set health = 'off' %}
+    {% elif h and (h.error_code or 'fail' in st or 'error' in st or 'stale' in st) %}{% set health = 'bad' %}
+    {% elif c.unavailable or not h %}{% set health = 'warn' %}
+    {% elif 'run' in st %}{% set health = 'run' %}
+    {% else %}{% set health = 'ok' %}{% endif %}
+    <tr class="co-row" data-name="{{ c.name|lower }}" data-active="{{ 1 if c.active else 0 }}" data-discovery="{{ 1 if c.discovery_only else 0 }}" data-attention="{{ 1 if health in ('bad','warn') else 0 }}" data-rank="{{ {'bad':0,'warn':1,'run':2,'ok':3,'off':4}[health] }}" data-subscribers="{{ c.subscribers or 0 }}" data-jobs="{{ c.openings or 0 }}">
+      <td data-label="Company"><b class="co-name">{{ c.name }}</b><small class="co-src">{{ c.career_source or c.ats_type|title }}</small>{% if c.discovery_only %}<span class="badge">Discovery only</span>{% endif %}</td>
+      <td data-label="Status"><span class="pill2 {{ 'on' if c.active else 'off' }}">{{ 'Active' if c.active else 'Inactive' }}</span></td>
+      <td data-label="Fetch health">
+        <span class="hstate {{ health }}"><span class="dot {{ health }}" aria-hidden="true"></span>{% if health=='off' %}Not fetching{% elif c.unavailable %}Unavailable / unverified{% elif h %}{{ h.display_state }}{% else %}Not reported{% endif %}</span>
+        <small>{% if h and h.last_success_at %}Last saved {{ h.last_success_at|admin_time }}{% elif h %}Never saved{% elif health!='off' %}No fetch report yet{% endif %}{% if h and h.error_code %} · <span class="co-err">{{ h.error_code }}</span>{% endif %}</small></td>
+      <td class="num" data-label="Active jobs">{{ c.openings }}<small>{% if c.last_seen %}Seen {{ c.last_seen|admin_time }}{% else %}Last seen unavailable{% endif %}</small></td>
+      <td class="num" data-label="Subscribers">{{ c.subscribers }}</td>
+      <td class="co-act"><button class="btn ghost sbtn" type="button" data-open-dialog="company-{{ c.id }}">Manage</button>
+        <dialog class="admin-drawer co-drawer" id="company-{{ c.id }}" aria-labelledby="company-{{ c.id }}-t">
+          <div class="dialog-heading"><div><h2 id="company-{{ c.id }}-t">{{ c.name }}</h2><p class="sub">{{ c.career_source or c.ats_type|title }} · {{ 'Active' if c.active else 'Inactive' }}{% if c.discovery_only %} · Discovery only{% endif %}</p></div><button class="btn ghost" type="button" data-close-dialog>Close</button></div>
+          <section class="co-sec"><h3>Latest fetch</h3>
+            {% if h %}<dl class="co-dl"><dt>State</dt><dd>{{ h.display_state }}</dd><dt>Last attempt</dt><dd>{{ h.updated_at|admin_time }}</dd><dt>Last saved</dt><dd>{{ h.last_success_at|admin_time if h.last_success_at else 'Never reported' }}</dd><dt>Jobs in fetch</dt><dd>{{ h.job_count }}</dd>{% if h.error_code %}<dt>Error</dt><dd class="co-err">{{ h.error_code }}</dd>{% endif %}</dl>{% else %}<p class="sub">No fetch has been reported for this company.</p>{% endif %}
+            {% if c.unavailable %}<p class="warnbox">Known unavailable / unverified source. Run a board check before relying on its jobs.</p>{% endif %}</section>
+          <section class="co-sec"><h3>Check board</h3>
+            <form method="post" action="{{ url_for('admin.company_check',company_id=c.id) }}" class="page-form">{{ csrf() }}<label><input type="checkbox" name="confirm_check" value="yes" required> Run a real read-only source request</label><button class="btn sbtn">Check board</button></form></section>
+          <section class="co-sec"><h3>Edit company</h3>{{ company_form(c) }}</section>
+        </dialog></td>
+    </tr>
+  {% else %}<tr><td colspan="6">No companies.</td></tr>{% endfor %}
+  </tbody></table></div>
+
+<dialog class="admin-drawer co-drawer" id="company-new" aria-labelledby="company-new-t"><div class="dialog-heading"><h2 id="company-new-t">Add company</h2><button class="btn ghost" type="button" data-close-dialog>Close</button></div>{{ company_form() }}</dialog>
+<script defer nonce="{{ g.script_nonce }}" src="{{ url_for('static', filename='js/admin-companies.js') }}"></script>
 {% elif admin_page=='jobs' %}<div class="tabs"><a class="tab" href="{{ url_for('admin.page',page='jobs') }}">All jobs</a><a class="tab" href="{{ url_for('admin.page',page='jobs',tab='duplicates') }}">Duplicates</a></div>
 {% if not duplicates %}<form method="get" class="toolbar"><input name="q" type="search" maxlength="200" value="{{ admin_query }}" placeholder="Search company or title" aria-label="Search jobs"><button class="btn">Search</button></form><div class="tw"><table class="tbl"><thead><tr><th>Title</th><th>Company</th><th>Source</th><th>First seen</th><th>Status</th><th></th></tr></thead><tbody>{% for j in admin_jobs %}<tr><td>{{ j.title }}</td><td>{{ j.name }}</td><td>{{ j.source }}</td><td>{{ j.first_seen_at|admin_time }}</td><td>{{ 'Open' if j.is_active else 'Closed' }}{% if j.admin_closed %} (admin){% endif %}</td><td>{{ action_form('close' if j.is_active else 'reopen','Close posting' if j.is_active else 'Reopen',url_for('admin.job_action',job_id=j.id)) }}</td></tr>{% else %}<tr><td colspan="6">No postings.</td></tr>{% endfor %}</tbody></table></div>{% else %}<p class="sub">Matching company names and titles identify possible duplicates; review the source postings before closing any copy.</p>{% endif %}
 {% elif admin_page=='queue' %}<div class="toolbar">{{ action_form('failed','Requeue failed tasks',url_for('admin.queue_action')) }}{{ action_form('stale','Recompute stale scores',url_for('admin.queue_action')) }}<span>{{ stale }} stale scores</span></div>

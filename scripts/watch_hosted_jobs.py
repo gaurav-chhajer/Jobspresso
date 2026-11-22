@@ -13,10 +13,12 @@ import requests
 from backend.groq_limits import CooldownPending, QuotaState
 
 from scripts import run_cloud_worker as worker
+from scripts import fetch_recovery
 from scripts.run_pipeline import exclusive_cycle
 
 logger = logging.getLogger(__name__)
-CHECK_INTERVAL_SECONDS = 5 * 60
+CHECK_INTERVAL_SECONDS = 60 * 60
+FETCH_RECOVERY_POLL_SECONDS = 60
 LOCK_PATH = Path(__file__).resolve().parents[1] / "data" / "hosted_worker.lock"
 QUEUE_POLL_SECONDS = 30
 EMAIL_CHECK_SECONDS = 60 * 60
@@ -101,7 +103,7 @@ class _QueuedClient:
             if self.stop.is_set():
                 raise RuntimeError("Queue worker is stopping")
             result = self.client.call(path, data)
-            if path in ("snapshot", "discovery/results"):
+            if path in ("snapshot", "observations", "discovery/results"):
                 self.ready.set()
             return result
         finally:
@@ -112,21 +114,23 @@ class _QueuedClient:
 
 
 def _fetch_loop(client, stop):
-    after_company_id = load_fetch_cursor(FETCH_CURSOR_PATH)
+    next_discovery = 0
     while not stop.is_set():
         started = time.monotonic()
-        logger.info("Independent fetch started; successful snapshots enter the durable queue.")
-        status = worker._fetch_and_score(client, started + worker.MATCHING_SECONDS,
-                                        fetch_only=True, pool=None, stop=stop, allow_partial=True,
-                                        start_after_company_id=after_company_id,
-                                        progress_callback=lambda company_id: save_fetch_cursor(
-                                            company_id, FETCH_CURSOR_PATH))
-        after_company_id = load_fetch_cursor(FETCH_CURSOR_PATH)
-        if status:
-            logger.error("Fetch loop stopped; successful snapshots remain queued. Review logs before restarting.")
-            return status
-        delay = max(0, started + CHECK_INTERVAL_SECONDS - time.monotonic())
-        logger.info("Fetch completed; next fetch in %.1f seconds, independent of scoring/email.", delay)
+        if started >= next_discovery:
+            next_discovery = started + CHECK_INTERVAL_SECONDS
+            keys = worker.configured_tavily_keys()
+            if keys:
+                try:
+                    worker.discover_roles(client, keys, started + worker.TAVILY_CYCLE_SECONDS, stop)
+                except (requests.RequestException, RuntimeError, ValueError, KeyError, TypeError) as error:
+                    logger.error('Web discovery stopped: error=%s; direct feed recovery continues', type(error).__name__)
+        try:
+            fetch_recovery.run_round(client, started + worker.MATCHING_SECONDS, stop)
+        except (requests.RequestException, RuntimeError, ValueError, KeyError, TypeError) as error:
+            logger.error('Fetch recovery deferred: error=%s; durable work retained', type(error).__name__)
+        delay = max(0, started + FETCH_RECOVERY_POLL_SECONDS - time.monotonic())
+        logger.info("Fetch recovery checks due companies again in %.1f seconds.", delay)
         if stop.wait(delay):
             break
     return 0
@@ -310,7 +314,7 @@ def main(argv=None):
                 status = run_cycle(args.provider, fetch_only=args.fetch_only)
                 if status or args.once:
                     return status
-                logger.info("Cycle complete; checking again in five minutes. Ctrl+C stops the worker.")
+                logger.info("Cycle complete; checking again in one hour. Ctrl+C stops the worker.")
                 for _ in range(CHECK_INTERVAL_SECONDS // 30):
                     time.sleep(30)
     except KeyboardInterrupt:

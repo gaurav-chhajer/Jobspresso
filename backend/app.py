@@ -1,6 +1,7 @@
 """Authenticated Jobspresso application with automatic background matching."""
 
 import hmac
+import hashlib
 import json
 import re
 import secrets
@@ -34,15 +35,16 @@ def create_app(database_path=None, upload_dir=None):
                               SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax")
     database = Path(database_path) if database_path is not None else ROOT / "data/jobs.db"
     uploads = Path(upload_dir) if upload_dir is not None else ROOT / "data/uploads"
-    location_cache = (0.0, [])
+    asset_versions = {
+        path.relative_to(application.static_folder).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()[:16]
+        for path in Path(application.static_folder).rglob('*')
+        if path.is_file() and path.suffix in {'.css', '.js', '.svg'}
+    }
 
-    def job_location_suggestions(conn):
-        nonlocal location_cache
-        expires, suggestions = location_cache
-        if perf_counter() >= expires:
-            suggestions = store.location_suggestions(conn)
-            location_cache = (perf_counter() + 60, suggestions)
-        return suggestions
+    @application.url_defaults
+    def version_static_assets(endpoint, values):
+        if endpoint == 'static' and values.get('filename') in asset_versions:
+            values.setdefault('v', asset_versions[values['filename']])
 
     def connection():
         if "database" not in g:
@@ -111,6 +113,8 @@ def create_app(database_path=None, upload_dir=None):
         if request.host.split(":")[0].lower() not in allowed:
             return "This hostname is not configured for Jobspresso.", 403
         g.user, g.account = None, None
+        if request.endpoint == 'static':
+            return None
         if request.blueprint == "worker":
             if not cloud_worker.authenticate():
                 return {"error": "Worker authentication required"}, 401
@@ -227,7 +231,14 @@ def create_app(database_path=None, upload_dir=None):
             session['page_filters'] = saved
         if not application.testing and getattr(g, "user", None) and response.status_code < 400:
             automatic_matching.ensure_started(database, notify=request.method == "POST")
-        response.headers["Cache-Control"] = "no-store"
+        if request.endpoint == 'static' and response.status_code in (200, 304):
+            filename = (request.view_args or {}).get('filename')
+            if filename in asset_versions and request.args.get('v') == asset_versions[filename]:
+                response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+            else:
+                response.headers['Cache-Control'] = 'public, max-age=0, must-revalidate'
+        else:
+            response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Content-Security-Policy"] = (
@@ -391,8 +402,6 @@ def create_app(database_path=None, upload_dir=None):
             data['admin_india_only'] = filtering_user['_admin_india_only']
             data["matches"], data["pages"] = store.matches(conn, user_id, data, utc_now())
             mark_time("matches")
-            data["job_locations"] = job_location_suggestions(conn)
-            mark_time("locations")
             data["company_groups"] = []
             for item in data["matches"]:
                 if not data["company_groups"] or data["company_groups"][-1]["id"] != item["company_id"]:

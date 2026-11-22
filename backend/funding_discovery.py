@@ -89,7 +89,13 @@ def parse_feed(text):
 
 def company_name(headline):
     match = HEADLINE.match(headline.strip())
-    return match.group('name').strip() if match else None
+    if not match:
+        return None
+    name = match.group('name').strip()
+    # Funding feeds commonly put a sector description before the employer.
+    # Keep the employer's spelling for board identity verification.
+    described = re.match(r'^.+?\s+(?i:startup|provider|brand|firm|chain)\s+(.+)$', name)
+    return described.group(1).strip() if described else name
 
 
 def key_of(name):
@@ -213,15 +219,24 @@ def link_pending(conn, resolve, cutoff, now):
     return linked
 
 
-def run(conn, now=None, fetch=fetch_feed, resolve=None, feeds=FEEDS):
-    """Collect feeds and ingest them. A failing feed is skipped, never fatal."""
+def run(conn, now=None, fetch=fetch_feed, resolve=None, feeds=FEEDS, *, budget_seconds=TIME_BUDGET_SECONDS,
+        require_feed=False):
+    """Collect feeds and ingest them, optionally requiring a successful read."""
     now = now or datetime.now(timezone.utc)
-    deadline = time.monotonic() + TIME_BUDGET_SECONDS
+    deadline = time.monotonic() + budget_seconds
     resolve = resolve or (lambda name: resolve_board(name, deadline))
+    return ingest(conn, collect_feeds(feeds, fetch, deadline, require_feed), resolve, now)
+
+
+def collect_feeds(feeds, fetch, deadline, require_feed):
     entries = []
+    feeds_read = 0
     for url in feeds:
         try:
             entries += parse_feed(fetch(url, deadline))
+            feeds_read += 1
         except (requests.RequestException, ValueError, ET.ParseError) as error:
             logger.warning('Funding feed skipped: host=%s error=%s', urlsplit(url).hostname, type(error).__name__)
-    return ingest(conn, entries, resolve, now)
+    if require_feed and not feeds_read:
+        raise RuntimeError('No funding feeds could be read')
+    return entries

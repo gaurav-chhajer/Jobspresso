@@ -17,19 +17,39 @@
     slider.addEventListener('input', updateScoreSlider);
     updateScoreSlider();
   }
-  const companyChoices = [...list.querySelectorAll('[data-company-choice]')];
-  const companyPanels = [...list.querySelectorAll('[data-company-panel]')];
-  function showCompany(companyId) {
-    companyPanels.forEach(card => { card.hidden = card.dataset.companyPanel !== companyId; });
-    companyChoices.forEach(link => {
-      if (link.dataset.companyChoice === companyId) link.setAttribute('aria-current', 'true');
-      else link.removeAttribute('aria-current');
-    });
-    const active = companyPanels.find(card => card.dataset.companyPanel === companyId);
-    panel.hidden = !active || ![...active.querySelectorAll('[data-role-id]')].some(role => role.dataset.roleId === panel.dataset.jobId);
+  list.classList.add('js-tiles');
+  const tiles = [...list.querySelectorAll('[data-company-panel]')];
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let activeRole = '';
+  const roleSelector = id => `[data-role-id="${CSS.escape(id)}"]`;
+  function syncPanel() {
+    const open = tiles.find(tile => tile.classList.contains('is-open'));
+    panel.hidden = !open || !panel.dataset.jobId || activeRole !== panel.dataset.jobId || !open.querySelector(roleSelector(panel.dataset.jobId));
   }
-  const initialCompany = list.querySelector('.company-role.is-selected')?.closest('[data-company-panel]');
-  if (companyChoices.length) showCompany(initialCompany?.dataset.companyPanel || companyChoices[0].dataset.companyChoice);
+  function pickRole(tile, jobId) {
+    tile.querySelectorAll('[data-role-id]').forEach(role => role.classList.toggle('is-shown', role.dataset.roleId === jobId));
+    tile.querySelectorAll('[data-role-pick]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.rolePick === jobId)));
+    activeRole = jobId;
+    syncPanel();
+  }
+  function setOpen(tile, open) {
+    tile.classList.toggle('is-open', open);
+    tile.querySelector('[data-company-choice]')?.setAttribute('aria-expanded', String(open));
+  }
+  function openTile(tile, jobId) {
+    tiles.forEach(item => setOpen(item, item === tile));
+    pickRole(tile, jobId || tile.querySelector('[data-role-pick]')?.dataset.rolePick || '');
+  }
+  function closeTiles() {
+    tiles.forEach(tile => setOpen(tile, false));
+    activeRole = '';
+    syncPanel();
+  }
+  const initialRole = list.querySelector('.company-role.is-selected');
+  const hashTile = tiles.find(tile => `#${tile.id}` === window.location.hash);
+  if (initialRole) openTile(initialRole.closest('[data-company-panel]'), initialRole.dataset.roleId);
+  else if (hashTile) openTile(hashTile);
+  else closeTiles();
   let pending;
   let sequence = 0;
 
@@ -40,8 +60,9 @@
       if (selected) link.setAttribute('aria-current', 'true');
       else link.removeAttribute('aria-current');
     });
-    const company = [...list.querySelectorAll('[data-role-id]')].find(role => role.dataset.roleId === jobId)?.closest('[data-company-panel]');
-    if (company) showCompany(company.dataset.companyPanel);
+    const owner = [...list.querySelectorAll('[data-role-id]')].find(role => role.dataset.roleId === jobId)?.closest('[data-company-panel]');
+    if (owner) openTile(owner, jobId);
+    else syncPanel();
   }
 
   async function select(url, push) {
@@ -87,15 +108,26 @@
 
   function click(event) {
     if (event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
-    const company = event.target.closest('[data-company-choice]');
-    if (company && list.contains(company)) {
+    const toggle = event.target.closest('[data-company-choice]');
+    const pick = event.target.closest('[data-role-pick]');
+    if ((toggle && list.contains(toggle)) || (pick && list.contains(pick))) {
       event.preventDefault();
       sequence += 1;
       if (pending) pending.abort();
       pending = null;
       panel.removeAttribute('aria-busy');
-      showCompany(company.dataset.companyChoice);
-      status.textContent = 'Company roles updated.';
+      const tile = (toggle || pick).closest('[data-company-panel]');
+      if (pick) {
+        pickRole(tile, pick.dataset.rolePick);
+        status.textContent = 'Role selected.';
+      } else if (tile.classList.contains('is-open')) {
+        closeTiles();
+        status.textContent = 'Company roles closed.';
+      } else {
+        openTile(tile);
+        status.textContent = 'Showing roles for ' + (tile.querySelector('.co-name')?.textContent || 'this company') + '.';
+        window.requestAnimationFrame(() => tile.scrollIntoView({block: 'nearest', behavior: reduceMotion ? 'auto' : 'smooth'}));
+      }
       return;
     }
     const link = event.target.closest('.jt-link');
@@ -129,6 +161,13 @@
     window.removeEventListener('pagehide', cleanup);
   }
   list.addEventListener('click', click);
+  list.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    const open = event.target.closest('.co-tile.is-open');
+    if (!open) return;
+    closeTiles();
+    open.querySelector('[data-company-choice]')?.focus();
+  });
   window.addEventListener('popstate', restore);
   window.addEventListener('pagehide', cleanup);
 })();

@@ -1,0 +1,22 @@
+company,ats,slug,job_count,api_url,legacy_slug,verified_at
+Axiom Law,greenhouse,axiom,11,https://boards-api.greenhouse.io/v1/boards/axiom/jobs,,2026-11-21T22:12:37.015102+00:00
+BlueCloud,lever,blue,12,https://api.lever.co/v0/postings/blue?mode=json,,2026-11-21T22:12:46.069085+00:00
+Complete,ashby,complete,6,https://api.ashbyhq.com/posting-api/job-board/complete,yc-employer-complete,2026-11-21T22:12:46.380397+00:00
+Double (Bookkeeping),ashby,double,9,https://api.ashbyhq.com/posting-api/job-board/double,,2026-11-21T22:12:46.696108+00:00
+Echo Neurotechnologies,greenhouse,echo,26,https://boards-api.greenhouse.io/v1/boards/echo/jobs,,2026-11-21T22:12:47.074922+00:00
+Flint (Marketing AI),ashby,flint,9,https://api.ashbyhq.com/posting-api/job-board/flint,,2026-11-21T22:12:47.407119+00:00
+Glimpse,ashby,glimpse,6,https://api.ashbyhq.com/posting-api/job-board/glimpse,yc-employer-glimpse-2,2026-11-21T22:12:47.920560+00:00
+Harbor (AI Insurance),ashby,harbor,5,https://api.ashbyhq.com/posting-api/job-board/harbor,,2026-11-21T22:13:21.399287+00:00
+Hazel Health,greenhouse,hazel,19,https://boards-api.greenhouse.io/v1/boards/hazel/jobs,,2026-11-21T22:13:21.745029+00:00
+Lance,ashby,lance,7,https://api.ashbyhq.com/posting-api/job-board/lance,yc-employer-lance,2026-11-21T22:13:22.114687+00:00
+Latent (Pharmacy AI),ashby,latent,23,https://api.ashbyhq.com/posting-api/job-board/latent,,2026-11-21T22:13:22.541614+00:00
+Monogram (AI Interface),ashby,monogram,5,https://api.ashbyhq.com/posting-api/job-board/monogram,,2026-11-21T22:13:22.851027+00:00
+Nectar Social,ashby,nectar,25,https://api.ashbyhq.com/posting-api/job-board/nectar,,2026-11-21T22:13:23.185883+00:00
+Pocket,ashby,pocket,14,https://api.ashbyhq.com/posting-api/job-board/pocket,yc-employer-pocket,2026-11-21T22:13:23.663162+00:00
+Porter Cares,lever,porter,20,https://api.lever.co/v0/postings/porter?mode=json,,2026-11-21T22:13:26.823925+00:00
+Porter Works,greenhouse,porter,5,https://boards-api.greenhouse.io/v1/boards/porter/jobs,,2026-11-21T22:13:27.398843+00:00
+Pure,ashby,pure,5,https://api.ashbyhq.com/posting-api/job-board/pure,yc-employer-pure,2026-11-21T22:13:27.716611+00:00
+Rain (Stablecoin Payments),ashby,rain,46,https://api.ashbyhq.com/posting-api/job-board/rain,,2026-11-21T22:13:28.121579+00:00
+Thera,ashby,thera,6,https://api.ashbyhq.com/posting-api/job-board/thera,yc-employer-thera,2026-11-21T22:13:28.494128+00:00
+Vector (Logistics),ashby,vector,3,https://api.ashbyhq.com/posting-api/job-board/vector,,2026-11-21T22:13:28.799022+00:00
+Veo Technologies,lever,veo,26,https://api.lever.co/v0/postings/veo?mode=json,,2026-11-21T22:13:31.604600+00:00

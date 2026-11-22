@@ -323,6 +323,14 @@ class ResumeTailoringTests(unittest.TestCase):
                          'only when submission','LinkedIn, Indeed, Wellfound, Greenhouse, Lever, and Ashby'):
             self.assertIn(expected,text)
 
+    def test_recruiter_brief_accepts_crlf(self):
+        brief = '# Context\n\n## Workflow\nTask'
+        with tempfile.TemporaryDirectory(dir=work.ROOT/'data') as directory:
+            path = Path(directory)/'instructions.md'
+            path.write_bytes(brief.replace('\n', '\r\n').encode('utf-8'))
+            with patch.object(gemini, 'INSTRUCTIONS_PATH', path):
+                self.assertEqual(gemini.recruiter_context(), brief)
+
     def test_missing_or_invalid_custom_instructions_make_no_provider_call(self):
         with tempfile.TemporaryDirectory(dir=work.ROOT/'data') as directory:
             path=Path(directory)/'instructions.md'

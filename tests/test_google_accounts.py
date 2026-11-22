@@ -64,7 +64,7 @@ class GoogleAccountTests(unittest.TestCase):
         response, exchange, verify = self.callback(state)
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Google sign-in complete", response.data)
-        self.assertIn(b'href="/static/css/jobspresso.css"', response.data)
+        self.assertRegex(response.data, rb'href="/static/css/jobspresso\.css\?v=[0-9a-f]{16}"')
         self.assertIn(b'page-loader is-active', response.data)
         self.assertNotIn(b'id="match-constellation"', response.data)
         self.assertIn(b'href="/"', response.data)
@@ -181,7 +181,7 @@ class GoogleAccountTests(unittest.TestCase):
         self.assertEqual(self.callback(state, claims, visitor)[0].status_code, 302)
         code = self.delivery.call_args.args[2].split("\n\n")[-1]
         page = visitor.get(google_accounts.LINK_PATH)
-        self.assertIn(b'href="/static/css/jobspresso.css"', page.data)
+        self.assertRegex(page.data, rb'href="/static/css/jobspresso\.css\?v=[0-9a-f]{16}"')
         self.assertIn(b'id="page-loader"', page.data)
         self.assertIn(b'js/jobspresso.js', page.data)
         self.assertNotIn(b'id="match-constellation"', page.data)

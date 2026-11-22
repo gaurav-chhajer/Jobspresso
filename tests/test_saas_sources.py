@@ -188,7 +188,7 @@ class SaasSourceTests(unittest.TestCase):
                 prepared = sources.prepare_job(dict(row, raw_json=json.dumps(row['raw_json'])))
             self.assertIn('FINAL REQUIREMENT', pipeline.extract_job_description(prepared))
 
-    def test_catalog_import_is_idempotent_and_zoom_cannot_fetch(self):
+    def test_catalog_import_is_idempotent_and_meta_cannot_fetch(self):
         with closing(sqlite3.connect(':memory:')) as conn:
             conn.execute('PRAGMA foreign_keys=ON')
             conn.executescript(pipeline.SCHEMA)
@@ -201,8 +201,9 @@ class SaasSourceTests(unittest.TestCase):
             states = dict(conn.execute('SELECT name,active FROM companies'))
             for name in ('Salesforce', 'Adobe', 'Spotify', 'Slack', 'Airbnb', 'Notion', 'Figma', 'Asana', 'Dropbox'):
                 self.assertEqual(states[name], 1)
-            self.assertEqual(states['Zoom'], 0)
+            self.assertEqual(states['Zoom'], 1)
+            self.assertEqual(states['Meta'], 0)
             self.assertEqual(conn.execute('PRAGMA foreign_key_check').fetchall(), [])
         with patch.object(sources.requests.Session, 'request') as request, self.assertRaises(ValueError):
-            sources.fetch('zoom')
+            sources.fetch('meta')
         request.assert_not_called()

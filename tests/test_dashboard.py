@@ -137,7 +137,7 @@ class DashboardTests(unittest.TestCase):
         self.conn.commit()
         grouped = self.client.get("/jobs")
         self.assertIn(b"Page 1 of 1", grouped.data)
-        self.assertIn(b"company-job-card", grouped.data)
+        self.assertIn(b"co-tile", grouped.data)
         first = self.client.get("/jobs?company=1")
         second = self.client.get("/jobs?company=1&page=2")
         self.assertIn(b"Page 1 of 2", first.data)

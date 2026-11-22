@@ -70,9 +70,9 @@ class WebFlowTests(unittest.TestCase):
             self.client.get('/jobs').close()
             response = self.client.get('/jobs?page=2')
             self.addCleanup(response.close)
-            self.assertEqual(suggestions.call_count, 1)
+            suggestions.assert_not_called()
         self.assertEqual(response.status_code, 200)
-        for stage in ('matches', 'locations', 'render', 'app'):
+        for stage in ('matches', 'render', 'app'):
             self.assertRegex(response.headers['Server-Timing'], rf'\b{stage};dur=\d+')
         self.assertNotIn('summary;', response.headers['Server-Timing'])
         self.assertNotIn('digest;', response.headers['Server-Timing'])
@@ -87,8 +87,8 @@ class WebFlowTests(unittest.TestCase):
     def test_pages_link_to_public_jobspresso_favicon(self):
         page = self.client.get('/login')
         self.assertIn("img-src 'self'", page.headers['Content-Security-Policy'].split('; '))
-        self.assertIn(b'rel="icon" type="image/svg+xml" href="/static/favicon.svg"', page.data)
-        self.assertIn(b'href="/static/css/jobspresso.css"', page.data)
+        self.assertRegex(page.data, rb'rel="icon" type="image/svg\+xml" href="/static/favicon.svg\?v=[a-f0-9]{16}"')
+        self.assertRegex(page.data, rb'href="/static/css/jobspresso.css\?v=[a-f0-9]{16}"')
         self.assertIn(b'class="primary-nav" id="primary-nav"', page.data)
 
         self.assertIn(b'id="pour"', page.data)
@@ -102,7 +102,7 @@ class WebFlowTests(unittest.TestCase):
         self.seed_user()
         page = self.client.get('/')
         self.assertEqual(page.status_code, 200)
-        self.assertIn(b'href="/static/favicon.svg"', page.data)
+        self.assertRegex(page.data, rb'href="/static/favicon.svg\?v=[a-f0-9]{16}"')
         self.assertIn("img-src 'self'", page.headers['Content-Security-Policy'].split('; '))
         self.assertIn("default-src 'none'", page.headers['Content-Security-Policy'].split('; '))
 
@@ -121,7 +121,7 @@ class WebFlowTests(unittest.TestCase):
         response = self.client.get('/not-a-real-page')
         self.assertEqual(response.status_code, 404)
         self.assertIn(b'class="jp-error-page"', response.data)
-        self.assertIn(b'href="/static/css/jobspresso.css"', response.data)
+        self.assertRegex(response.data, rb'href="/static/css/jobspresso.css\?v=[a-f0-9]{16}"')
         self.assertIn(b'Back to Jobspresso', response.data)
 
     def test_server_error_uses_branded_error_page_and_keeps_status(self):
@@ -291,7 +291,7 @@ class WebFlowTests(unittest.TestCase):
         before = self.conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
         apply_migrations(self.conn)
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], before)
-        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0], 57)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0], 66)
 
     def test_deterministic_breakdown_is_saved_without_evidence_section(self):
         self.seed_user()
@@ -414,8 +414,8 @@ class WebFlowTests(unittest.TestCase):
             with self.subTest(route=route):
                 response = self.client.get(route)
                 self.assertEqual(response.status_code, 200)
-                self.assertIn(b'href="/static/css/theme.css"', response.data)
-                self.assertIn(b'href="/static/css/wow.css"', response.data)
+                self.assertRegex(response.data, rb'href="/static/css/theme.css\?v=[a-f0-9]{16}"')
+                self.assertRegex(response.data, rb'href="/static/css/wow.css\?v=[a-f0-9]{16}"')
                 if route == '/':
                     self.assertIn(b'class="card welcome"', response.data)
                     self.assertIn(b'class="dash"', response.data)
@@ -431,10 +431,10 @@ class WebFlowTests(unittest.TestCase):
                 self.assertIn(b'aria-current="page"', response.data)
                 self.assertIn(b'aria-hidden="true"', response.data)
                 self.assertNotIn(b"fonts.googleapis.com", response.data)
-                self.assertIn(b'href="/static/css/jobspresso.css"', response.data)
+                self.assertRegex(response.data, rb'href="/static/css/jobspresso.css\?v=[a-f0-9]{16}"')
                 self.assertIn(b'id="page-loader"', response.data)
                 self.assertNotIn(b'id="match-constellation"', response.data)
-                script = re.search(rb'<script defer nonce="([^"]+)" src="/static/js/jobspresso.js"></script>', response.data)
+                script = re.search(rb'<script defer nonce="([^"]+)" src="/static/js/jobspresso.js\?v=[a-f0-9]{16}"></script>', response.data)
                 self.assertIsNotNone(script)
                 policy = response.headers["Content-Security-Policy"]
                 self.assertIn("script-src 'nonce-" + script.group(1).decode() + "'", policy)
@@ -443,12 +443,12 @@ class WebFlowTests(unittest.TestCase):
                 self.assertNotIn("script-src 'unsafe-inline'", policy)
                 if route == "/settings":
                     self.assertEqual(response.data.count(b"<script"), 5)
-                    self.assertIn(b'src="/static/js/companies.js"', response.data)
-                    self.assertIn(b'src="/static/js/preferences.js"', response.data)
-                    self.assertIn(b'href="/static/css/preferences.css"', response.data)
+                    self.assertRegex(response.data, rb'src="/static/js/companies.js\?v=[a-f0-9]{16}"')
+                    self.assertRegex(response.data, rb'src="/static/js/preferences.js\?v=[a-f0-9]{16}"')
+                    self.assertRegex(response.data, rb'href="/static/css/preferences.css\?v=[a-f0-9]{16}"')
                 elif route == "/jobs":
                     self.assertEqual(response.data.count(b"<script"), 4)
-                    self.assertIn(b'src="/static/js/job-selection.js"', response.data)
+                    self.assertRegex(response.data, rb'src="/static/js/job-selection.js\?v=[a-f0-9]{16}"')
                     self.assertIn("connect-src 'self'", policy)
                 else:
                     self.assertEqual(response.data.count(b"<script"), 3)
@@ -465,7 +465,7 @@ class WebFlowTests(unittest.TestCase):
         self.assertIn(b'role="status" aria-live="polite"', page.data)
         self.assertIn(b'name="job_id" value="2"', page.data)
         self.assertIn(b'name="csrf_token"', page.data)
-        script = re.search(rb'<script defer nonce="([^"]+)" src="/static/js/job-selection.js"></script>', page.data)
+        script = re.search(rb'<script defer nonce="([^"]+)" src="/static/js/job-selection.js\?v=[a-f0-9]{16}"></script>', page.data)
         self.assertIsNotNone(script)
         self.assertIn("script-src 'nonce-" + script.group(1).decode() + "'", page.headers['Content-Security-Policy'])
         self.assertIn("connect-src 'self'", page.headers['Content-Security-Policy'])
@@ -516,7 +516,7 @@ class WebFlowTests(unittest.TestCase):
             with self.subTest(path=path):
                 page = self.client.get(path)
                 self.assertEqual(page.status_code, 200)
-                self.assertIn(b'href="/static/css/jobspresso.css"', page.data)
+                self.assertRegex(page.data, rb'href="/static/css/jobspresso.css\?v=[a-f0-9]{16}"')
                 self.assertIn(b'id="page-loader"', page.data)
                 self.assertIn(b'class="wrap site-header-inner jp-topbar"', page.data)
                 self.assertIn(b'class="auth jp-auth-layout"', page.data)
@@ -526,7 +526,7 @@ class WebFlowTests(unittest.TestCase):
                 self.assertNotIn(b'<aside class="side', page.data)
                 self.assertNotIn(b'id="match-constellation"', page.data)
                 self.assertNotIn(b'localStorage.getItem("jp-user")', page.data)
-                nonce = re.search(rb'nonce="([^"]+)" src="/static/js/jobspresso.js"', page.data).group(1).decode()
+                nonce = re.search(rb'nonce="([^"]+)" src="/static/js/jobspresso.js\?v=[a-f0-9]{16}"', page.data).group(1).decode()
                 nonces.append(nonce)
                 self.assertIn("script-src 'nonce-" + nonce + "'", page.headers['Content-Security-Policy'])
                 self.assertNotIn(b'id="energy"', page.data)
@@ -678,7 +678,7 @@ class WebFlowTests(unittest.TestCase):
         nonces = []
         for _ in range(2):
             page = self.client.get("/settings")
-            nonce = re.search(rb'<script src="/static/js/preferences.js" nonce="([^"]+)" defer>', page.data)
+            nonce = re.search(rb'<script src="/static/js/preferences.js\?v=[a-f0-9]{16}" nonce="([^"]+)" defer>', page.data)
             self.assertIsNotNone(nonce)
             value = nonce.group(1).decode()
             nonces.append(value)
@@ -757,7 +757,7 @@ class WebFlowTests(unittest.TestCase):
         self.assertIn(b'id="company-view-more" type="button"', page.data)
         self.assertIn(b'data-company-name="Beta"', page.data)
         self.assertRegex(page.data, rb'name="companies" value="2" checked')
-        nonce = re.search(rb'<script src="/static/js/companies.js" nonce="([^"]+)" defer>', page.data)
+        nonce = re.search(rb'<script src="/static/js/companies.js\?v=[a-f0-9]{16}" nonce="([^"]+)" defer>', page.data)
         self.assertIsNotNone(nonce)
         self.assertIn("script-src 'nonce-" + nonce.group(1).decode() + "'", page.headers['Content-Security-Policy'])
         script = self.client.get('/static/js/companies.js')

@@ -53,6 +53,19 @@ class CloudEndpointTests(unittest.TestCase):
         self.addCleanup(response.request.input_stream.close)
         return response
 
+    def test_funding_refresh_requires_worker_credentials_and_valid_input(self):
+        with patch('backend.funding_discovery.ingest', return_value={'recorded': 2, 'linked': 1}) as refresh:
+            unauthorized = self.client.post('/internal/worker/funding-refresh', json={})
+            self.assertEqual(unauthorized.status_code, 401)
+            self.assertEqual(self.call('funding-refresh', {'url': 'https://example.com'}).status_code, 400)
+            refresh.assert_not_called()
+            response = self.call('funding-refresh', {'entries': []})
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json, {'recorded': 2, 'linked': 1})
+            self.assertEqual(refresh.call_args.args[1], [])
+            refresh.side_effect = RuntimeError('No funding feeds could be read')
+            self.assertEqual(self.call('funding-refresh', {'entries': []}).status_code, 503)
+
     def test_rescore_boilerplate_only_requeues_exact_noise_items(self):
         self.conn.execute("UPDATE scores SET is_stale=0,missing_requirements=? WHERE job_id=1",
                           (json.dumps(["How", "Benefits", "AWS"]),))
@@ -335,6 +348,29 @@ class CloudEndpointTests(unittest.TestCase):
             self.assertEqual(self.call('work?company_id=' + value).status_code, 400)
         oversized = 'work?' + '&'.join(['company_id=1'] * (cloud_worker.MAX_COMPANIES + 1))
         self.assertEqual(self.call(oversized).status_code, 400)
+
+    def test_company_work_scopes_rows_before_preference_filtering(self):
+        with patch.object(pipeline, 'filter_jobs_for_user', wraps=pipeline.filter_jobs_for_user) as filter_jobs:
+            response = self.call('work?company_id=2')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([item['job']['id'] for item in response.json['items']], [2])
+        self.assertTrue(filter_jobs.called)
+        for call in filter_jobs.call_args_list:
+            self.assertTrue(all(row['company_id'] == 2 for row in call.args[0]))
+
+    def test_queued_job_selection_preserves_eligibility_and_title_priority(self):
+        user = self.conn.execute("SELECT * FROM users WHERE id=1").fetchone()
+        profile = role_titles.current(self.conn, user)
+        filtering_user = role_titles.filtering_user(user, profile)
+        original = pipeline.filter_candidate_jobs(self.conn, filtering_user)
+        expected = [row['id'] for row in role_titles.select(original, profile)]
+        self.assertTrue(expected)
+        for limit in (1, cloud_worker.MAX_WORK_ITEMS):
+            actual = pipeline.matching_work_batch(self.conn, user, profile, limit)
+            self.assertEqual([row['id'] for row in actual], expected[:limit])
+        self.assertTrue(pipeline.eligible_unscored_job(self.conn, filtering_user, expected[0]))
+        self.conn.execute("UPDATE jobs SET is_active=0 WHERE id=?", (expected[0],))
+        self.assertFalse(pipeline.eligible_unscored_job(self.conn, filtering_user, expected[0]))
 
     def test_score_rejects_unsubscribed_and_changed_posting(self):
         item = self.item()
@@ -754,6 +790,17 @@ class CloudEndpointTests(unittest.TestCase):
 
 
 class CloudRunnerTests(unittest.TestCase):
+    def test_score_save_requires_explicit_write_acknowledgement(self):
+        client = MagicMock()
+        item = dict(user=dict(id=1), job=dict(id=2), fingerprint='0' * 64)
+        client.call.return_value = dict(saved=False, already_scored=True)
+        self.assertFalse(runner.save_score_result(client, item, {}))
+        client.call.return_value = dict(saved=True)
+        self.assertTrue(runner.save_score_result(client, item, {}))
+        client.call.return_value = {}
+        with self.assertRaises(ValueError):
+            runner.save_score_result(client, item, {})
+
     def test_large_complete_feed_uses_additive_batches(self):
         company = dict(id=1, name='Synthetic', ats_type='lever', board_slug='synthetic', fingerprint='0' * 64)
         jobs = [dict(external_id=str(i), title='Engineer', raw_json={}) for i in range(3)]
@@ -1155,6 +1202,7 @@ class CloudRunnerTests(unittest.TestCase):
             response.status_code = 200
             response.iter_content.return_value = [b'{"next":null}']
             self.assertEqual(client.call("email", {"after": 0}), {"next": None})
+            session.return_value.cookies.clear.assert_called_once_with()
             self.assertFalse(session.return_value.request.call_args.kwargs["allow_redirects"])
             response.status_code = 302
             with self.assertRaises(runner.HostedOperationError) as error:
@@ -1233,13 +1281,13 @@ class LocalHostedWatcherTests(unittest.TestCase):
             email.assert_not_called()
             client.close.assert_called_once()
 
-    def test_watch_waits_five_minutes_then_stops_on_failure(self):
+    def test_watch_waits_one_hour_then_stops_on_failure(self):
         with patch.object(watcher, 'exclusive_cycle'), \
                 patch.object(watcher, 'run_cycle', side_effect=[0, 1]) as cycle, \
                 patch.object(watcher.time, 'sleep') as sleep:
             self.assertEqual(watcher.main(['--run', '--provider', 'similarity']), 1)
         self.assertEqual(cycle.call_count, 2)
-        self.assertEqual(sum(call.args[0] for call in sleep.call_args_list), 300)
+        self.assertEqual(sum(call.args[0] for call in sleep.call_args_list), 3600)
 
     def test_once_interrupt_and_uncertain_errors_do_not_retry(self):
         for outcome, expected in ((0, 0), (KeyboardInterrupt(), 130), (requests.Timeout('private'), 1)):

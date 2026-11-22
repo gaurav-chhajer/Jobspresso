@@ -49,6 +49,27 @@ class HeadlineTests(unittest.TestCase):
         self.assertEqual(fd.key_of('Acme Pay Pvt Ltd'), fd.key_of('acme-pay'))
         self.assertEqual(fd.slug_variants('Acme Pay Inc.'), ['acmepay', 'acme-pay'])
 
+    def test_sector_descriptions_are_not_part_of_the_employer_name(self):
+        for headline, name in (
+            ('Physical AI startup Humyn Labs raises $2M', 'Humyn Labs'),
+            ('Dialysis care provider VitusCare raises $5M', 'VitusCare'),
+            ('Egg brand Henfruit raises $3M', 'Henfruit'),
+            ('Wealthtech startup finny.club raises $1M', 'finny.club'),
+            ('AI Startup Disseqt AI raises $1M', 'Disseqt AI'),
+            ('Egg Brand Henfruit raises $3M', 'Henfruit'),
+            ('Spacetech firm SatSure raises $5M', 'SatSure'),
+            ('Quick service restaurant chain Boba Bhai raises $2M', 'Boba Bhai'),
+        ):
+            with self.subTest(headline=headline):
+                self.assertEqual(fd.company_name(headline), name)
+
+    def test_described_employer_links_to_existing_catalog(self):
+        with closing(database()) as conn:
+            conn.execute("INSERT INTO companies(name,ats_type,board_slug) VALUES('Humyn Labs','lever','humyn')")
+            result = fd.ingest(conn, [entry('Physical AI startup Humyn Labs raises $2M')],
+                               lambda name: self.fail('Existing employer should be reused'), NOW)
+            self.assertEqual(result, dict(recorded=1, linked=1))
+
 
 class FeedTests(unittest.TestCase):
     def test_entrackr_uses_published_rss_endpoint(self):

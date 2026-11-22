@@ -8,6 +8,7 @@ import logging
 import os
 from pathlib import Path, PurePosixPath
 import re
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -123,6 +124,39 @@ def _extract(request):
     return target
 
 
+def _release_cleanup(active_sha, pending_sha):
+    """Preview then remove only obsolete revision directories under the release root.
+
+    Called under the pipeline lock before extraction to leave room for migrations.
+    Shared data and environment symlinks are unlinked, never traversed by rmtree.
+    """
+    if not RELEASES.is_dir():
+        return
+    if RELEASES.is_symlink() or RELEASES.resolve().parent != ROOT.resolve():
+        raise ValueError('Unsafe release cleanup root')
+    if active_sha is None:
+        return  # No established active revision: retain everything for inspection.
+    active = RELEASES / active_sha
+    if active.is_symlink() or not active.is_dir():
+        raise ValueError('Active release is missing or unsafe')
+    revisions = []
+    for entry in RELEASES.iterdir():
+        if re.fullmatch(r'[0-9a-f]{40}', entry.name):
+            if entry.is_symlink() or not entry.is_dir() or entry.resolve().parent != RELEASES.resolve():
+                raise ValueError('Unsafe release cleanup candidate')
+            revisions.append(entry)
+        if len(revisions) > 1000:
+            raise ValueError('Too many release cleanup candidates')
+    rollbacks = sorted((entry for entry in revisions if entry.name not in {active_sha, pending_sha}),
+                       key=lambda entry: (entry.stat().st_mtime_ns, entry.name), reverse=True)
+    candidates = rollbacks[2:]
+    logger.info('Release cleanup preview: preserve active and two recent revisions; remove=%s',
+                [entry.name for entry in candidates])
+    for entry in candidates:
+        shutil.rmtree(entry)
+    logger.info('Release cleanup completed: removed=%d', len(candidates))
+
+
 def _import_application(release):
     sys.path.insert(0, str(release))
     import scripts
@@ -172,6 +206,9 @@ def application():
         importing = False
         try:
             with _pipeline_lock():
+                stage = 'cleanup'
+                _release_cleanup(active['sha'] if active else None, request['sha'])
+                stage = 'extract'
                 release = _extract(request)
                 stage = 'migrations'
                 _migration_module(release).migrate_pending(

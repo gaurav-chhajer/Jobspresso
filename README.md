@@ -1,5 +1,18 @@
 # Jobspresso
 
+Migration `066_verified_review_boards.sql` adds the 21 live boards reviewed from
+`needs_review_boards.csv`; the resolved catalog is in
+`data/boards/verified_review_boards.csv`. Employer identities are matched by
+verified board or confirmed YC employer slug, preserving unrelated namesakes.
+Both Porter boards remain separate: Porter Cares and Porter Works. Existing
+company IDs, saved jobs and subscriptions are retained. Back up before migration.
+
+Migration `065_verified_discovery_boards.sql` imports the 105 boards listed in
+`verified_boards_discovery.csv`. It upgrades matching discovery-only company
+records in place, preserving IDs, saved jobs and subscriptions, and inserts
+missing companies once. Patreon retains its registered Ashby adapter. Back up
+the database before applying migrations; the import itself makes no network calls.
+
 YC startup jobs use the existing shared-pool fetch and worker sync. Public YC role/location pages are collected without Tavily; stable YC job IDs are stored under each startup's employer identity. These curated pages are additive observations, not a complete vacancy feed: missing listings never close saved jobs. Existing senior-role eligibility filtering still applies. Full descriptions are fetched from public job pages when scoring needs them. A local fetch seeds the `yc` catalog entry; hosted workers require the updated server and catalog sync before fetching YC.
 
 Hosted description updates verify YC job IDs, employer identity and YC URLs against the startup record. Optional web-discovery failures are logged and not replayed; direct career feeds continue through the existing partial-failure policy.
@@ -1058,6 +1071,13 @@ data to GitHub. Windows environment variables do not transfer to the server.
    from wsgi import application
    ```
 
+   Console-free release activation automatically logs a cleanup preview and removes
+   obsolete revision directories before extraction, under the pipeline lock. It keeps
+   the active revision, two most recently modified other revisions, and any pending
+   revision. Staging directories, database backups, resumes, and shared data are
+   preserved. Cleanup errors stop activation; no cleanup runs without an established
+   active revision. This policy takes effect when the updated release loader is deployed.
+
    Enable **Force HTTPS before Reload or inviting testers**. HTTPS redirection is
    handled by PythonAnywhere; the app uses secure cookies and accepts only the
    configured hostname. Do not map the repository, `.env`, `data/`, or uploads as
@@ -1667,3 +1687,48 @@ window, even after their headlines have dropped out of RSS. Use
 `python -B -m scripts.run_funding_discovery --catalog-only --run` to link saved
 leads to unique existing catalog matches without network calls. Omit `--run`
 to preview those links.
+
+Zoom uses the verified Workday tenant `zoom`, site `Zoom`. Migration
+`060_verified_zoom.sql` enables an existing Zoom record, preserving its ID.
+On a fresh database, the existing catalog seed registers the source.
+
+Migration `061_verified_enterprise_career_feeds.sql` registers Standard Chartered
+(SAP), TIAA (Workday Search), Nike (Workday international nke), NielsenIQ
+(SmartRecruiters India), and Whatfix (Trakstar). Apply through the backed-up migration process. Nike's
+US Workday site is separate. The international feed can stop mid-pagination,
+so the worker preserves prior observations when a later page fails.
+
+Migration `062_verified_uscreen.sql` enables Uscreen?s public BambooHR board
+while preserving the existing company ID.
+
+### Durable direct-feed recovery
+
+The continuous hosted worker keeps per-company recovery state in
+`data/feed_recovery.db`. Back this file up with the worker's local data when
+moving the worker. Downloaded feeds and the exact outstanding transfer survive
+restarts. Each scheduler pass attempts each due company once. Failures remain
+pending with exponential backoff from one minute to one hour; successful feeds
+refresh every 30 minutes. Existing saved hourly deadlines honor the shorter
+interval on the next scheduler pass. The scheduler checks for due work every
+minute. Direct feeds are
+processed sequentially to bound buffered data and hosted load. Scoring remains
+independent, and web discovery retains the local worker's hourly cadence.
+
+Apply additive migration `064_feed_transfer_receipts.sql` after a verified
+database backup, and deploy the hosted endpoint before restarting the worker.
+Receipts commit atomically with jobs and matching tasks. After a timeout the
+worker checks the receipt before replaying its exact request. A newer transfer
+or changed catalog invalidates stale pending content. Every batch must have an
+acknowledged job count and content digest before a company is marked saved.
+Large feeds retain the existing additive ingestion policy; unseen jobs are not
+closed by individual batches. Incomplete or repeated pagination stays pending.
+
+Recovery cannot repair a removed board, revoked credential, or incompatible
+source response by retrying. Such failures remain visible in worker health and
+the recovery database (`status`, `error`, `attempts`, `due`, `last_success`, and
+`job_count`). Logs report aggregate saved/pending coverage and per-company error
+types and HTTP status codes. A saved company means the configured feed completed
+and its returned jobs were acknowledged, subject to existing source scope and
+eligibility filtering; it does not imply discovery-only or disabled boards were
+fetched. Spool limits are 64 MiB per company and 512 MiB total; reaching a limit
+leaves the company pending and reports an error.

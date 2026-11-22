@@ -22,7 +22,8 @@ from email.message import EmailMessage
 import re
 import requests
 from pathlib import Path
-from contextlib import closing
+from contextlib import closing, nullcontext
+from itertools import islice
 from html import escape, unescape
 from html.parser import HTMLParser
 from datetime import datetime, timezone
@@ -208,7 +209,7 @@ def fetch_jobs_for_company(company_row):
     return fetcher(company_row["board_slug"])
 
 
-def upsert_jobs(conn, company_id, fetched_jobs, *, additive=False):
+def upsert_jobs(conn, company_id, fetched_jobs, *, additive=False, commit=True):
     from backend.job_ingestion import deduplicate, mode_for_source
     company = conn.execute('SELECT career_source FROM companies WHERE id=?', (company_id,)).fetchone()
     if company is None:
@@ -226,7 +227,10 @@ def upsert_jobs(conn, company_id, fetched_jobs, *, additive=False):
     source_company_id = company_id
     changed_companies = set()
     changed = []
-    with conn:
+    # Worker receipts must commit in the same transaction as the job changes.
+    if not commit and not conn.in_transaction:
+        raise ValueError('An explicit transaction is required')
+    with conn if commit else nullcontext():
         now = datetime.now(timezone.utc).isoformat()
         previous_snapshot = {row[0]: row[1] for row in conn.execute(
             "SELECT external_id,raw_json FROM jobs WHERE company_id=? AND is_active=1", (company_id,))}
@@ -446,6 +450,41 @@ def _admin_india_job_eligible(job):
     return india_work_eligible(job['location'], '\n'.join(part for part in parts if part))
 
 
+_UNSCORED_JOBS = """
+    FROM jobs j WHERE j.is_active=1
+    AND j.company_id IN (SELECT id FROM companies WHERE active=1)
+    AND j.id NOT IN (SELECT job_id FROM scores WHERE user_id=? AND is_stale=0)
+    AND (NOT EXISTS (SELECT 1 FROM user_settings WHERE user_id=? AND subscriptions_configured=1)
+         OR EXISTS (SELECT 1 FROM company_subscriptions WHERE user_id=? AND company_id=j.company_id))
+"""
+
+
+def matching_work_batch(conn, user, profile, limit):
+    """Keep title priority while loading descriptions only for shortlisted jobs."""
+    from backend import role_titles
+    user_params = (user['id'],) * 3
+    filtering_user = account_filtering_user(conn, role_titles.filtering_user(user, profile))
+    titles = conn.execute("SELECT j.id,j.title " + _UNSCORED_JOBS + " ORDER BY j.id", user_params)
+    ranked = role_titles.select(titles, profile) if profile is not None else titles
+    ranked = iter(ranked)
+    found = []
+    while ids := [row['id'] for row in islice(ranked, 64)]:
+        placeholders = ','.join('?' for _ in ids)
+        rows = conn.execute("SELECT j.* " + _UNSCORED_JOBS + f" AND j.id IN ({placeholders})",
+                            (*user_params, *ids))
+        by_id = {row['id']: row for row in filter_jobs_for_user(rows.fetchall(), filtering_user)}
+        found.extend(by_id[job_id] for job_id in ids if job_id in by_id)
+        if len(found) >= limit:
+            break
+    return found[:limit]
+
+
+def eligible_unscored_job(conn, user, job_id):
+    rows = conn.execute("SELECT j.* " + _UNSCORED_JOBS + " AND j.id=?",
+                        ((user['id'],) * 3) + (job_id,))
+    return bool(filter_jobs_for_user(rows.fetchall(), account_filtering_user(conn, user)))
+
+
 def filter_candidate_jobs(conn, user_row):
     """
     Pre-scoring filter for a student/fresh-grad audience. Runs two layers
@@ -462,14 +501,7 @@ def filter_candidate_jobs(conn, user_row):
     obviously-wrong roles out of the scoring queue.
     """
     cur = conn.execute(
-        """
-        SELECT j.* FROM jobs j
-        WHERE j.is_active = 1
-        AND j.company_id IN (SELECT id FROM companies WHERE active=1)
-        AND j.id NOT IN (SELECT job_id FROM scores WHERE user_id = ? AND is_stale=0)
-        AND (NOT EXISTS (SELECT 1 FROM user_settings WHERE user_id=? AND subscriptions_configured=1)
-             OR EXISTS (SELECT 1 FROM company_subscriptions WHERE user_id=? AND company_id=j.company_id))
-        """,
+        "SELECT j.* " + _UNSCORED_JOBS,
         (user_row["id"], user_row["id"], user_row["id"]),
     )
     return filter_jobs_for_user(cur.fetchall(), account_filtering_user(conn, user_row))

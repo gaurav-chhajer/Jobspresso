@@ -265,6 +265,8 @@ class HostedClient:
         encoded = None if data is None else json.dumps(data, allow_nan=False).encode()
         if encoded is not None and len(encoded) > MAX_BODY_BYTES:
             raise ValueError("Hosted request exceeds transfer limit")
+        # Worker endpoints reject cookies, including any set by the hosting proxy.
+        self.session.cookies.clear()
         with self.session.request("GET" if data is None else "POST",
                                   self.origin + "/internal/worker/" + path,
                                   data=encoded,
@@ -585,6 +587,17 @@ def score_pending_deterministic(client, deadline, scorer, stop=None):
         pool.close(result)
 
 
+def save_score_result(client, item, result):
+    reply = client.call("score", dict(user_id=item["user"]["id"], job_id=item["job"]["id"],
+                                      fingerprint=item["fingerprint"], result=result))
+    if reply.get("saved") is True:
+        logger.info("Saved score user_id=%s job_id=%s", item["user"]["id"], item["job"]["id"])
+        return True
+    if reply.get("saved") is False and reply.get("already_scored") is True:
+        return False
+    raise ValueError("Invalid hosted score acknowledgement")
+
+
 def _score_pending(client, deadline, pool, successful=None, failed=False, stop=None):
     queued = successful is None
     after, scores, accounts, skipped = 0, 0, 0, 0
@@ -742,10 +755,8 @@ def _score_pending(client, deadline, pool, successful=None, failed=False, stop=N
                 # Only an explicit Groq rate-limit rejection permits advancing a key.
                 result = pool.score(item["user"], item["job"], item["company_name"])
                 stage = "save"
-                client.call("score", dict(user_id=item["user"]["id"], job_id=item["job"]["id"],
-                                          fingerprint=item["fingerprint"], result=result))
-                saved += 1
-                logger.info("Saved score user_id=%s job_id=%s", item["user"]["id"], item["job"]["id"])
+                if save_score_result(client, item, result):
+                    saved += 1
             except groq_limits.CooldownPending:
                 raise
             except (requests.RequestException, ValueError, KeyError, TypeError, RuntimeError) as error:
@@ -777,10 +788,8 @@ def _score_pending(client, deadline, pool, successful=None, failed=False, stop=N
             try:
                 result = future.result()
                 stage = "save"
-                client.call("score", dict(user_id=item["user"]["id"], job_id=item["job"]["id"],
-                                          fingerprint=item["fingerprint"], result=result))
-                saved += 1
-                logger.info("Saved score user_id=%s job_id=%s", item["user"]["id"], item["job"]["id"])
+                if save_score_result(client, item, result):
+                    saved += 1
             except groq_limits.CooldownPending:
                 raise
             except (requests.RequestException, ValueError, KeyError, TypeError, RuntimeError) as error:

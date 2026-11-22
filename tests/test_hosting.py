@@ -14,6 +14,24 @@ ENV = {"STUDENTCONNECT_BASE_URL": ORIGIN, "STUDENTCONNECT_SECRET_KEY": "ab" * 32
 
 
 class HostingConfigurationTests(unittest.TestCase):
+    def test_static_assets_are_versioned_and_cached_without_database_access(self):
+        app = create_app(database_path='missing-static-test.db')
+        app.testing = True
+        with app.test_request_context():
+            from flask import url_for
+            asset_url = url_for('static', filename='css/jobspresso.css')
+        self.assertIn('?v=', asset_url)
+        with patch('backend.app.sqlite3.connect', side_effect=AssertionError('Static request accessed database')):
+            response = app.test_client().get(asset_url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers['Cache-Control'], 'public, max-age=31536000, immutable')
+        response.close()
+        response = app.test_client().get('/static/css/jobspresso.css?v=old')
+        self.assertEqual(response.headers['Cache-Control'], 'public, max-age=0, must-revalidate')
+        response.close()
+        response = app.test_client().get('/login')
+        self.assertEqual(response.headers['Cache-Control'], 'no-store')
+
     def test_local_mode_and_public_configuration(self):
         with patch.dict(os.environ, {"STUDENTCONNECT_BASE_URL": "", "STUDENTCONNECT_SECRET_KEY": ""}):
             origin, hosted, key = hosting.application_settings()

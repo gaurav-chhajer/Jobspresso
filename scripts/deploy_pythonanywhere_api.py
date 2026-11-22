@@ -139,7 +139,7 @@ def deploy(sha):
                         if not status['success']:
                             stage = status.get('stage')
                             code = status.get('error_code')
-                            if stage not in ('extract', 'migrations', 'startup') or not isinstance(code, str) or not re.fullmatch(r'[A-Za-z]{2,40}', code):
+                            if stage not in ('cleanup', 'extract', 'migrations', 'startup') or not isinstance(code, str) or not re.fullmatch(r'[A-Za-z]{2,40}', code):
                                 raise legacy.RemoteDeploymentError('confirmation', 'invalid_status')
                             step = status.get('migration_step')
                             name = status.get('sqlite_errorname')

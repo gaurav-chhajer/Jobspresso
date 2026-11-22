@@ -12,6 +12,7 @@ import os
 import re
 import smtplib
 import time
+import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -168,6 +169,41 @@ def register_routes(application, connection, database):
         worker_health.save(connection(), body())
         return {'saved': True}
 
+    @routes.post('/funding-refresh')
+    def funding_refresh():
+        from backend import funding_discovery
+
+        payload = body()
+        rows = payload.get('entries')
+        if set(payload) != {'entries'} or not isinstance(rows, list) or len(rows) > 600:
+            raise ValueError('Invalid funding entries')
+        entries, boards = [], {}
+        for row in rows:
+            if not isinstance(row, dict) or set(row) != {'title', 'link', 'published', 'board'}:
+                raise ValueError('Invalid funding entry')
+            title, link, date, board = (row[key] for key in ('title', 'link', 'published', 'board'))
+            if (not isinstance(title, str) or not 1 <= len(title) <= 300
+                    or not isinstance(link, str) or len(link) > 2000 or not funding_discovery.allowed_host(link)
+                    or not isinstance(date, str) or len(date) > 40):
+                raise ValueError('Invalid funding entry metadata')
+            published = datetime.fromisoformat(date)
+            if published.tzinfo is None:
+                raise ValueError('Funding timestamp requires a timezone')
+            name = funding_discovery.company_name(title)
+            if not name:
+                raise ValueError('Missing funding company')
+            if board is not None:
+                if (not isinstance(board, list) or len(board) != 2
+                        or board[0] not in ('greenhouse', 'lever', 'ashby')
+                        or board[1] not in funding_discovery.slug_variants(name)):
+                    raise ValueError('Invalid verified funding board')
+                boards[funding_discovery.key_of(name)] = tuple(board)
+            entries.append(dict(title=title, link=link, published=published))
+        conn = connection()
+        with run_pipeline.exclusive_cycle(Path(database).parent / 'pipeline.lock'), conn:
+            return funding_discovery.ingest(conn, entries, lambda name: boards.get(funding_discovery.key_of(name)),
+                                            datetime.now(timezone.utc))
+
     @routes.post('/sync-catalog')
     def sync_catalog():
         from backend.career_sources import SOURCES, UNVERIFIED_SOURCES, VERIFIED_WORLDWIDE_SOURCES
@@ -275,10 +311,28 @@ def register_routes(application, connection, database):
                         (reported_at.astimezone(INDIA).date().isoformat(), slot, increment))
         return {"saved": True, "revision": revision}
 
+    @routes.get("/feed-receipt")
+    def feed_receipt():
+        company_id = store.integer(request.args.get('company_id', ''), 1, 2147483647)
+        receipt = connection().execute(
+            'SELECT token,digest,saved,saved_at FROM feed_transfer_receipts WHERE company_id=?',
+            (company_id,)).fetchone()
+        return {'receipt': dict(receipt) if receipt else None}
+
     @routes.post("/observations")
     @routes.post("/snapshot")
     def snapshot():
         data = body()
+        transfer = data.get('transfer')
+        if transfer is not None and (not isinstance(transfer, dict) or
+                set(transfer) != {'token', 'previous'} or
+                not isinstance(transfer['token'], str) or
+                not re.fullmatch(r'[a-f0-9]{32}', transfer['token']) or
+                transfer['previous'] is not None and (not isinstance(transfer['previous'], str) or
+                    not re.fullmatch(r'[a-f0-9]{32}', transfer['previous']))):
+            raise ValueError('Invalid transfer identity')
+        digest = hashlib.sha256(json.dumps(dict(endpoint=request.path.rsplit('/', 1)[-1], payload=data),
+            sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
         company_id = positive_id(data.get("company_id"))
         jobs = data.get("jobs")
         if not isinstance(jobs, list) or len(jobs) > MAX_JOBS:
@@ -307,6 +361,15 @@ def register_routes(application, connection, database):
                                    (company_id,)).fetchone()
             if company is None or data.get("fingerprint") != fingerprint(dict(company)):
                 return {"error": "Company changed; fetch again"}, 409
+            receipt = conn.execute('SELECT token,digest,saved FROM feed_transfer_receipts WHERE company_id=?',
+                                   (company_id,)).fetchone()
+            if transfer is not None:
+                if receipt and receipt['token'] == transfer['token']:
+                    if receipt['digest'] != digest:
+                        return {'error': 'Transfer identity reused with different content'}, 409
+                    return {'saved': receipt['saved'], 'token': receipt['token'], 'digest': digest}
+                if transfer['previous'] != (receipt['token'] if receipt else None):
+                    return {'error': 'Newer transfer exists; fetch again'}, 409
             from backend.job_ingestion import deduplicate, mode_for_source
             additive = request.path.endswith('/observations')
             mode = 'observed' if additive else mode_for_source(company['career_source'])
@@ -315,8 +378,13 @@ def register_routes(application, connection, database):
             if mode == 'snapshot' and len(seen) != len(jobs):
                 raise ValueError('Duplicate snapshot jobs')
             jobs = deduplicate(jobs, mode)
-            pipeline.upsert_jobs(conn, company_id, jobs, additive=additive)
-        return {"saved": len(jobs)}
+            pipeline.upsert_jobs(conn, company_id, jobs, additive=additive, commit=False)
+            token = transfer['token'] if transfer else uuid.uuid4().hex
+            conn.execute('''INSERT INTO feed_transfer_receipts(company_id,token,digest,saved,saved_at)
+                VALUES(?,?,?,?,?) ON CONFLICT(company_id) DO UPDATE SET token=excluded.token,
+                digest=excluded.digest,saved=excluded.saved,saved_at=excluded.saved_at''',
+                (company_id, token, digest, len(jobs), datetime.now(timezone.utc).isoformat()))
+        return ({'saved': len(jobs), 'token': token, 'digest': digest} if transfer else {"saved": len(jobs)})
 
     @routes.get("/work")
     def work():
@@ -341,13 +409,26 @@ def register_routes(application, connection, database):
             return payload
 
         profile = role_titles.current(conn, user)
-        candidates = pipeline.filter_candidate_jobs(conn, role_titles.filtering_user(user, profile))
         if company_values:
             # Failed boards must not consume the bounded batch's candidate slots.
             yc_selected = conn.execute("SELECT 1 FROM companies WHERE career_source='yc' AND id IN (" +
                                        ','.join('?' for _ in company_ids) + ')', tuple(company_ids)).fetchone()
+            filtering_user = role_titles.filtering_user(user, profile)
+            if yc_selected:
+                candidates = pipeline.filter_candidate_jobs(conn, filtering_user)
+            else:
+                # Scope before loading descriptions and applying expensive preference checks.
+                rows = conn.execute('SELECT j.* ' + pipeline._UNSCORED_JOBS +
+                                    ' AND j.company_id IN (' + ','.join('?' for _ in company_ids) + ')',
+                                    (*(user['id'],) * 3, *company_ids)).fetchall()
+                candidates = pipeline.filter_jobs_for_user(
+                    rows, pipeline.account_filtering_user(conn, filtering_user))
             candidates = [job for job in candidates if job["company_id"] in company_ids or
                           yc_selected and json.loads(job['raw_json'] or '{}').get('career_source') == 'yc']
+            if profile is not None:
+                candidates = role_titles.select(candidates, profile)[:MAX_WORK_ITEMS]
+        else:
+            candidates = pipeline.matching_work_batch(conn, user, profile, MAX_WORK_ITEMS if profile else 1)
         if not candidates and (profile is not None or conn.execute(
                 'SELECT 1 FROM user_settings WHERE user_id=? AND subscriptions_configured=1', (user['id'],)).fetchone()):
             return empty_work()
@@ -357,7 +438,7 @@ def register_routes(application, connection, database):
             return {"items": [], "next": user["id"], "role_profile_required": {
                 "user": required_user, "fingerprint": fingerprint(dict(user)),
                 "version": role_titles.VERSION, "model": pipeline.GROQ_MODEL}}
-        for job in role_titles.select(candidates, profile)[:MAX_WORK_ITEMS]:
+        for job in candidates:
             company = conn.execute("SELECT name FROM companies WHERE id=?", (job["company_id"],)).fetchone()
             items.append(dict(user=dict(user), job=dict(job), company_name=company[0],
                               fingerprint=fingerprint(work_identity(user, job))))
@@ -383,8 +464,7 @@ def register_routes(application, connection, database):
             if user is None or task is None or task['revision'] != revision or data.get('fingerprint') != fingerprint(dict(user)):
                 return {'completed': False}
             profile = role_titles.current(conn, user)
-            candidates = pipeline.filter_candidate_jobs(conn, role_titles.filtering_user(user, profile))
-            if (profile is None and candidates) or (profile is not None and role_titles.select(candidates, profile)):
+            if pipeline.matching_work_batch(conn, user, profile, 1):
                 return {'completed': False}
             conn.execute("UPDATE matching_tasks SET status='complete',last_error=NULL,updated_at=? WHERE user_id=? AND revision=?",
                          (datetime.now(timezone.utc).isoformat(), uid, revision))
@@ -573,7 +653,7 @@ def register_routes(application, connection, database):
                 validate_evaluation(result, user["resume_text"], pipeline.extract_job_description(job))
             task = conn.execute("SELECT revision FROM matching_tasks WHERE user_id=?", (user_id,)).fetchone()
             pipeline.store_score(conn, job_id, user_id, result)
-            if task and not pipeline.filter_candidate_jobs(conn, filtering_user):
+            if task and not pipeline.matching_work_batch(conn, user, profile, 1):
                 conn.execute("""UPDATE matching_tasks SET status='complete',last_error=NULL
                     WHERE user_id=? AND revision=?""", (user_id, task[0]))
         return {"saved": True}
@@ -678,7 +758,7 @@ def register_routes(application, connection, database):
                 if profile is None or role_titles.match_index(title, profile) is None:
                     return {'eligible': False, 'job': prepared, 'fingerprint': fingerprint(work_identity(user, prepared))}
                 filtering_user = role_titles.filtering_user(user, profile)
-            eligible = any(candidate['id'] == job_id for candidate in pipeline.filter_candidate_jobs(conn, filtering_user))
+            eligible = pipeline.eligible_unscored_job(conn, filtering_user, job_id)
             return {'eligible': eligible, 'job': prepared, 'fingerprint': fingerprint(work_identity(user, prepared))}
 
     @routes.post("/email")

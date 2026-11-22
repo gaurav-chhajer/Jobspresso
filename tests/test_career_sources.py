@@ -52,6 +52,48 @@ class CareerSourceTests(unittest.TestCase):
         self.assertEqual(sources.WORKABLE_ACCOUNTS['awesomemotive'], 'awesomemotive')
         self.assertEqual(sources.WORKDAY['workiva'], ('workiva', 'careers'))
 
+    def test_nielseniq_uses_verified_india_postings_and_full_details(self):
+        item = dict(id='123', name='Software Engineer', company={'identifier': 'NielsenIQ'},
+                    location={'country': 'in', 'fullLocation': 'Chennai, India'},
+                    releasedDate='2026-11-20', typeOfEmployment={'label': 'Full-time'})
+        with patch.object(sources.Feed, 'json', return_value={'totalFound': 1, 'content': [item]}) as fetch:
+            posting, = sources.fetch('nielseniq')
+        self.assertEqual(fetch.call_args.kwargs['params'], dict(country='in', limit=50, offset=0))
+        self.assertEqual(posting['url'], 'https://jobs.smartrecruiters.com/NielsenIQ/123')
+        posting['raw_json'] = json.dumps(posting['raw_json'])
+        detail = dict(item, jobAd={'sections': {'jobDescription': {'text': 'Build software.'},
+                                                'qualifications': {'text': 'Know Python.'}}})
+        with patch.object(sources.Feed, 'json', return_value=detail):
+            prepared = sources.prepare_job(posting)
+        self.assertEqual(json.loads(prepared['raw_json'])['descriptionHtml'], 'Build software.<br>Know Python.')
+        with patch.object(sources.Feed, 'json', return_value=dict(detail, id='456')):
+            with self.assertRaisesRegex(ValueError, 'identity changed'):
+                sources.prepare_job(posting)
+
+    def test_whatfix_public_job_link_and_full_description(self):
+        page = '<a href="/jobs/fk01234/">Software Engineer\nBengaluru,\nKarnataka,\nIndia\nFull-time</a>'
+        with patch.object(sources.Feed, 'request', return_value=page):
+            posting, = sources.fetch('whatfix')
+        self.assertEqual(posting['location'], 'Bengaluru, Karnataka, India')
+        posting['raw_json'] = json.dumps(posting['raw_json'])
+        detail = '<div class="js-job-title rb-text-1">Software Engineer</div><div class="jobdesciption"><p>Build software.</p></div>'
+        with patch.object(sources.Feed, 'request', return_value=detail):
+            prepared = sources.prepare_job(posting)
+        self.assertEqual(json.loads(prepared['raw_json'])['descriptionHtml'], '<p>Build software.</p>')
+
+    def test_uscreen_bamboohr_fetches_detail_for_the_same_posting(self):
+        item = dict(id='165', jobOpeningName='Engineer', atsLocation={'country': 'India'})
+        with patch.object(sources.Feed, 'json', return_value={'result': [item]}):
+            posting, = sources.fetch('uscreen')
+        self.assertEqual(posting['location'], 'India')
+        posting['raw_json'] = json.dumps(posting['raw_json'])
+        detail = dict(jobOpeningName='Engineer', jobOpeningShareUrl=posting['url'], description='Build software.')
+        with patch.object(sources.Feed, 'json', return_value={'result': {'jobOpening': detail}}):
+            self.assertEqual(json.loads(sources.prepare_job(posting)['raw_json'])['descriptionHtml'], 'Build software.')
+            detail['jobOpeningShareUrl'] += '0'
+            with self.assertRaisesRegex(ValueError, 'identity changed'):
+                sources.prepare_job(posting)
+
     def google_candidate(self):
         url = 'https://www.google.com/about/careers/applications/jobs/results/90108035430523590-software-engineer/'
         candidate = sources.job('google', '90108035430523590', 'Software Engineer', 'India', url)
@@ -199,6 +241,13 @@ class CareerSourceTests(unittest.TestCase):
         self.assertEqual(request.call_args_list[1].kwargs['data']['offset'], 1)
         self.assertNotIn('descriptionHtml', jobs[0]['raw_json'])
         self.assertEqual(jobs[0]['raw_json']['career_source'], 'hotstar')
+
+    def test_salesforce_rechecks_missing_listings_at_same_offset(self):
+        with patch.object(sources.Feed, 'json', side_effect=[{}, dict(total=0, jobPostings=[])]) as request:
+            self.assertEqual(sources.fetch('salesforce'), [])
+        self.assertEqual(request.call_args_list[0], request.call_args_list[1])
+        with patch.object(sources.Feed, 'json', side_effect=[{}, {}]), self.assertRaises(KeyError):
+            sources.fetch('salesforce')
 
     def test_complete_empty_and_incomplete_duplicate_changed_count(self):
         item = dict(title='Analyst', externalPath='/job/India/A_1', locationsText='India')
