@@ -190,6 +190,18 @@ def register_routes(app, connection, context, now, database, uploads):
             data['failed_tasks'] = data['failed_tasks'][:PAGE_SIZE]
             data['stale'] = conn.execute('SELECT COUNT(*) FROM scores WHERE is_stale=1').fetchone()[0]
         elif page == 'companies':
+            counts = dict(total=0, active=0, inactive=0, attention=0, discovery=0)
+            for company in conn.execute("SELECT id,active,discovery_only,career_source FROM companies WHERE name LIKE ? ESCAPE '\\'",
+                                        (store.like_pattern(query),)):
+                health = data['worker_health'].get(('fetch', company['id']))
+                state = health['display_state'].lower() if health else ''
+                counts['total'] += 1
+                counts['active' if company['active'] else 'inactive'] += 1
+                counts['discovery'] += bool(company['discovery_only'])
+                if company['active'] and (known_unavailable(company) or not health or health['error_code']
+                                          or any(value in state for value in ('fail', 'error', 'stale'))):
+                    counts['attention'] += 1
+            data['company_counts'] = counts
             rows = conn.execute('''SELECT c.*,
                 (SELECT COUNT(*) FROM company_subscriptions sub WHERE sub.company_id=c.id) subscribers,
                 (SELECT COUNT(*) FROM jobs j WHERE j.company_id=c.id AND j.is_active=1) openings,

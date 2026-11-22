@@ -27,6 +27,19 @@ class AdminIntegrationTests(unittest.TestCase):
         clock.start()
         self.addCleanup(clock.stop)
 
+    def test_company_counts_cover_all_search_results_on_every_page(self):
+        self.conn.executemany("INSERT INTO companies(name,ats_type,board_slug,active,discovery_only) VALUES(?,'lever',?,?,?)",
+                              [('CountCo %03d' % i, 'countco-%d' % i, int(i % 2 == 0), int(i % 3 == 0))
+                               for i in range(65)])
+        self.conn.commit()
+        for page in (1, 2, 3):
+            response = self.client.get('/admin/area/companies?q=CountCo&p=' + str(page))
+            self.assertEqual(response.status_code, 200)
+            for key, count in (('all', 65), ('attention', 33), ('active', 33), ('inactive', 32), ('discovery', 22)):
+                self.assertRegex(response.data, ('data-filter="%s"[^>]*>[^<]*<b>%d</b>' % (key, count)).encode())
+        empty = self.client.get('/admin/area/companies?q=NoSuchCompany')
+        self.assertIn(b'data-total="0"', empty.data)
+
     def second_user(self, admin_role=0):
         self.conn.execute("INSERT INTO users(id,name,email,resume_text) VALUES(2,'Student','admin-prefix@example.test','Private second resume')")
         self.conn.execute("INSERT INTO accounts(user_id,password_hash,is_admin,created_at) VALUES(2,'test-only',?,'2026-10-01T00:00:00+00:00')",(admin_role,))

@@ -28,16 +28,7 @@
 {% if u.user_id!=user.id %}<details><summary>Delete account permanently</summary><p class="sub">Deletes private records and uploaded resumes. The last active verified admin is protected.</p><form method="post" action="{{ url_for('admin_delete_user',user_id=u.user_id) }}" class="page-form">{{ csrf() }}<label>Type account email<input name="confirm_email" type="email" required maxlength="254" autocomplete="off"></label><button class="btn">Permanently delete</button></form></details>{% endif %}</dialog></td></tr>{% else %}<tr><td colspan="7">No matching accounts.</td></tr>{% endfor %}</tbody></table></div>
 {% elif admin_page=='companies' %}
 {# ---- classify every company once so the page can group, count and filter it ---- #}
-{% set ns = namespace(total=0, active=0, inactive=0, attention=0, discovery=0) %}
-{% for c in admin_companies %}
-  {% set h = worker_health.get(('fetch', c.id)) %}
-  {% set st = (h.display_state|string|lower) if h else '' %}
-  {% if not c.active %}{% set ns.inactive = ns.inactive + 1 %}
-  {% elif c.unavailable or (h and (h.error_code or 'fail' in st or 'error' in st or 'stale' in st)) or not h %}{% set ns.attention = ns.attention + 1 %}{% endif %}
-  {% if c.active %}{% set ns.active = ns.active + 1 %}{% endif %}
-  {% if c.discovery_only %}{% set ns.discovery = ns.discovery + 1 %}{% endif %}
-  {% set ns.total = ns.total + 1 %}
-{% endfor %}
+{% set ns = company_counts %}
 
 {# 1. Pipeline status: two worker signals on one line, long explanation tucked away #}
 <section class="co-health" aria-label="Worker health">

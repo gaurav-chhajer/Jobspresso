@@ -37,7 +37,7 @@
         }
         chips.forEach(c => c.setAttribute("aria-pressed", String(c.dataset.filter === filter)));
         status.textContent = shown
-            ? "Showing " + shown + " of " + rows.length + (paged ? " companies on this page. Filters and counts cover this page only." : " companies.")
+            ? "Showing " + shown + " of " + rows.length + (paged ? " companies on this page. Counts cover all search results; filters apply to this page." : " companies.")
             : "No companies match this filter.";
     }
 
