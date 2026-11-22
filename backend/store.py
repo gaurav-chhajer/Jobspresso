@@ -8,6 +8,7 @@ from backend.locations import matches as location_matches
 from urllib.parse import urlsplit
 
 PAGE_SIZE = 20
+COMPANY_PAGE_SIZE = 12
 STATUSES = ("saved", "applied", "screen", "assessment", "interview", "offer", "rejected", "no_reply")
 DEFAULT_SETTINGS = dict(university="", graduation_year=None, cadence="daily", send_time="08:00",
                         timezone="Asia/Kolkata", min_score=60, include_gaps=1, subscriptions_configured=0)
@@ -195,7 +196,7 @@ def matches(conn, user_id, selected_filters, now, include_stale=False):
                 SELECT COUNT(*) company_count,COALESCE(SUM(company_openings),0) opening_count FROM grouped
             ), page AS (
                 SELECT *,ROW_NUMBER() OVER (ORDER BY stale,{company_sort},company_id) company_rank
-                FROM grouped ORDER BY company_rank LIMIT 6 OFFSET ?
+                FROM grouped ORDER BY company_rank LIMIT ? OFFSET ?
             ), roles AS (
                 SELECT f.job_id,p.company_rank,p.company_openings,
                        ROW_NUMBER() OVER (PARTITION BY f.company_id ORDER BY f.is_stale,{role_sort}) card_rank
@@ -206,11 +207,12 @@ def matches(conn, user_id, selected_filters, now, include_stale=False):
             LEFT JOIN jobs j ON j.id=r.job_id LEFT JOIN companies c ON c.id=j.company_id
             LEFT JOIN scores s ON s.job_id=j.id AND s.user_id=?
             ORDER BY r.company_rank,r.card_rank
-        """, (*(params[-2:] + params[:-2] if funding_order else params), (selected_filters["page"] - 1) * 6, user_id)).fetchall()
+        """, (*(params[-2:] + params[:-2] if funding_order else params), COMPANY_PAGE_SIZE,
+               (selected_filters["page"] - 1) * COMPANY_PAGE_SIZE, user_id)).fetchall()
         company_count = rows[0]["company_count"]
         selected_filters["company_count"] = company_count
         selected_filters["opening_count"] = rows[0]["opening_count"]
-        return [match(row) for row in rows if row["job_id"] is not None], max(1, (company_count + 5) // 6)
+        return [match(row) for row in rows if row["job_id"] is not None], max(1, (company_count + COMPANY_PAGE_SIZE - 1) // COMPANY_PAGE_SIZE)
     count_params = params[:-2] if funding_order else params
     count = conn.execute("SELECT COUNT(*) " + where, count_params).fetchone()[0]
     rows = conn.execute("SELECT " + MATCH_COLUMNS + " " + where + " ORDER BY " + order + " LIMIT ? OFFSET ?",

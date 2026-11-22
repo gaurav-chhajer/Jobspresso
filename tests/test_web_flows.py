@@ -320,6 +320,27 @@ class WebFlowTests(unittest.TestCase):
         rows,pages=store.matches(self.conn,1,selected,datetime.now(timezone.utc))
         self.assertEqual([row['job_id'] for row in rows],[1])
 
+    def test_jobs_company_pages_show_twelve_without_duplicates(self):
+        from backend import store
+        self.seed_user()
+        for identifier in range(3, 16):
+            self.conn.execute("INSERT INTO companies(id,name,ats_type,board_slug) VALUES(?,?,'lever',?)",
+                              (identifier, 'Company %02d' % identifier, 'company-%d' % identifier))
+            self.conn.execute("INSERT INTO jobs(id,company_id,external_id,title,first_seen_at,last_seen_at) VALUES(?,?,?,'Engineer','2026-11-01','2026-11-01')",
+                              (identifier, identifier, str(identifier)))
+            store_score(self.conn, identifier, 1, dict(fit_score=84, reasoning='Fit', matched_skills=[], missing_requirements=[]))
+        self.conn.commit()
+        for sort in ('best', 'recent', 'funded'):
+            selected = store.filters({'sort': sort})
+            selected['company_cards'] = True
+            first, pages = store.matches(self.conn, 1, selected, datetime.now(timezone.utc))
+            self.assertEqual(len({row['company_id'] for row in first}), 12)
+            self.assertEqual(pages, 2)
+            selected['page'] = 2
+            second, _ = store.matches(self.conn, 1, selected, datetime.now(timezone.utc))
+            self.assertEqual(len(second), 3)
+            self.assertEqual(len({row['company_id'] for row in first + second}), 15)
+
     def test_jobs_groups_companies_with_bounded_roles_and_full_company_view(self):
         from backend import store
         self.seed_user()
