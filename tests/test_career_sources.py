@@ -82,12 +82,12 @@ class CareerSourceTests(unittest.TestCase):
         self.assertEqual(json.loads(prepared['raw_json'])['descriptionHtml'], '<p>Build software.</p>')
 
     def test_uscreen_bamboohr_fetches_detail_for_the_same_posting(self):
-        item = dict(id='165', jobOpeningName='Engineer', atsLocation={'country': 'India'})
+        item = dict(id='165', jobOpeningName='Customer Growth Manager', atsLocation={'country': 'India'})
         with patch.object(sources.Feed, 'json', return_value={'result': [item]}):
             posting, = sources.fetch('uscreen')
         self.assertEqual(posting['location'], 'India')
         posting['raw_json'] = json.dumps(posting['raw_json'])
-        detail = dict(jobOpeningName='Engineer', jobOpeningShareUrl=posting['url'], description='Build software.')
+        detail = dict(jobOpeningName='Customer Growth Manager', jobOpeningShareUrl=posting['url'], description='Build software.')
         with patch.object(sources.Feed, 'json', return_value={'result': {'jobOpening': detail}}):
             self.assertEqual(json.loads(sources.prepare_job(posting)['raw_json'])['descriptionHtml'], 'Build software.')
             detail['jobOpeningShareUrl'] += '0'

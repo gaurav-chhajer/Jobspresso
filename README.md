@@ -1698,7 +1698,7 @@ Migration `061_verified_enterprise_career_feeds.sql` registers Standard Chartere
 US Workday site is separate. The international feed can stop mid-pagination,
 so the worker preserves prior observations when a later page fails.
 
-Migration `062_verified_uscreen.sql` enables Uscreen?s public BambooHR board
+Migration `062_verified_uscreen.sql` enables the public Uscreen BambooHR board
 while preserving the existing company ID.
 
 ### Durable direct-feed recovery

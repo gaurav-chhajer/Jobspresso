@@ -481,7 +481,10 @@ def fetch(key, deadline=None, *, require_complete=False):
         # The same senior-title rule already governs eligibility in the pipeline.
         # Apply it before transfer to keep large enterprise snapshots bounded.
         from backend.pipeline_skeleton import SENIOR_TITLE_KEYWORDS
-        rows = [row for row in rows if not any(word in row['title'].lower() for word in SENIOR_TITLE_KEYWORDS)]
+        # Uscreen's official BambooHR board currently lists only manager roles.
+        # Preserve those real postings in the shared pool; matching can assess fit.
+        if key != 'uscreen':
+            rows = [row for row in rows if not any(word in row['title'].lower() for word in SENIOR_TITLE_KEYWORDS)]
         if mode == 'snapshot' and len(rows) > 5000:
             raise ValueError('Eligible career snapshot exceeds the hosted job limit')
         return rows
